@@ -51,10 +51,13 @@ Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm ut
 Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain via Drude ADE models.
 
 ## Milestone 17 — Inverse Electromagnetic Design & Optimization
-Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework.
-* **Controlled Optimization Loop:** Interrogates user-defined parameter search spaces (e.g., Progressive Phase between array elements) using deterministic Grid Sweeps or stochastic Random Searches restricted by strict budget limits to protect execution overhead.
-* **Real Full-Wave Interrogation:** Extracted fitness objectives are derived *exclusively* from running the unified core FDTD solver on each candidate. The system physically generates the field domain, integrates the Far-Field NF2FF, and extracts true simulation quantities rather than depending on fake surrogate models.
-* **Validation & Reproduction:** Actively compares the discovered "Best Candidate" baseline improvement matrix against the 0-state baseline. The winning optimized configuration is explicitly re-simulated as the final step and rendered visually for robust verification. 
+Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework utilizing dynamic parameter sweeps bounded by strict execution budgets.
+
+## Milestone 18 — Electromagnetic Topology Optimization
+Introduces genuine Topological Inverse-Design capabilities directly integrated into the unified FDTD Maxwell kernel.
+* **Density to Material Interpolation (SIMP):** Voxelizes a user-defined physical zone into a continuous material density distribution ($\rho \in [0, 1]$). The kernel maps these abstract values explicitly to physical constitutive equations ($\epsilon(\rho) = \epsilon_{bg} + \rho^p (\epsilon_{design} - \epsilon_{bg})$) evaluated at every timestep.
+* **Stochastic Target-Based Optimization:** A heuristic macro-voxel hill-climbing algorithm perturbs the spatial topology, enforces rigorous Volume-Fraction constraints (e.g., maximum 40% material budget), and queries the exact resulting Full-Wave FDTD evaluation to maximize physical objective goals (e.g., Lens Focal Intensity). 
+* **Binarization & Manufacturing Re-Validation:** To prevent the optimizer from claiming artificial gains via physically impossible intermediate $\rho$ states, the final "best" topology is mathematically projected (Binarized) to hard $0$ or $1$ boundary states. The laboratory then strictly executes a final un-faked Forward FDTD pass on the binarized structure, yielding the final defensible 'Manufacturing' score.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -74,3 +77,4 @@ Evolves the laboratory from forward-simulation to a completely self-contained In
 - [x] Milestone 15 — Adaptive mesh refinement
 - [x] Milestone 16 — Metamaterials & Engineered Electromagnetic Media
 - [x] Milestone 17 — Inverse Electromagnetic Design & Optimization
+- [x] Milestone 18 — Electromagnetic Topology Optimization
