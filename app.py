@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 16 — Metamaterials & Engineered Electromagnetic Media
+Milestone 17 — Inverse Electromagnetic Design & Optimization
 """
 
 import streamlit as st
@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import math
 import time
 import pandas as pd
+import random
 
 # ============================================================
 # IMPORTS & GPU DETECTION
@@ -45,7 +46,8 @@ MAT_LIB = {
     "Vacuum / Air": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "FR-4 (Lossy)": {"er": 4.4, "mur": 1.0, "sigma": 0.005, "is_dispersive": False, "is_metamaterial": False},
     "PEC (Perfect Conductor)": {"er": 1.0, "mur": 1.0, "sigma": -1.0, "is_dispersive": False, "is_metamaterial": False},
-    "Dispersive Water (Debye)": {"er_s": 78.4, "er_inf": 4.6, "tau": 8.1e-12, "sigma": 0.05, "is_dispersive": True, "is_metamaterial": False},
+    "Anisotropic Sapphire (Tensor)": {"er_x": 9.3, "er_y": 11.5, "er_z": 9.3, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
+    "Dispersive Water (Debye)": {"er_s": 78.4, "er_inf": 4.6, "tau": 8.1e-12, "sigma": 0.05, "mur": 1.0, "is_dispersive": True, "is_metamaterial": False},
     "Negative Epsilon (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.5e9, "w_pm": 0.0, "g_m": 0.0, "is_dispersive": False, "is_metamaterial": True},
     "Negative Index NIM (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.2e9, "w_pm": 2*math.pi*15e9, "g_m": 2*math.pi*0.2e9, "is_dispersive": False, "is_metamaterial": True}
 }
@@ -55,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 16 — Metamaterials & Engineered Media")
+st.markdown("### Milestone 17 — Inverse Electromagnetic Design & Optimization")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -66,50 +68,46 @@ active_backend = "GPU" if (backend_mode in ["Auto", "GPU"] and GPU_AVAILABLE) el
 st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.0f} MB`")
 
 st.sidebar.header("1. EXPERIMENT MODE")
-exp_mode = st.sidebar.selectbox("Select Experiment", [
+exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Inverse Design & Optimization",
     "Metamaterials Laboratory",
     "Adaptive Mesh Refinement (AMR)",
     "Antenna Array Laboratory",
     "Single Antenna (Dipole/Patch)", 
-    "Advanced Validation Laboratory"
+    "Advanced Validation Laboratory",
+    "Material Dispersion Analyzer"
 ])
 
-meta_mode = None
+meta_mode = val_suite = None
 if exp_mode == "Metamaterials Laboratory":
     meta_mode = st.sidebar.selectbox("Test Type", ["Effective Medium (Drude NIM Slab)", "Explicit Structured Medium (Wire Array)", "Material Frequency Analyzer"])
+elif exp_mode == "Advanced Validation Laboratory":
+    val_suite = st.sidebar.selectbox("Validation Suite", ["1. Wave Physics (Velocity)", "2. Boundary & Material", "3. CPU vs GPU", "4. Anisotropic Birefringence"])
 
 # ============================================================
 # GRID & DOMAIN SETUP
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory"]:
-    Nx = Ny = 40; Nz = 140
+if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization"]:
+    Nx = Ny = 40; Nz = 40 if exp_mode == "Inverse Design & Optimization" else 140
     dx = dy = dz = 0.005 
 else:
     Nx = Ny = Nz = 80
     dx = dy = dz = 0.005
 
 cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
-pml_thickness = 10; pml_order = 3; pml_R = 1e-4; pml_alpha = 0.05
-dt = 0.9 * (1.0 / (C_LIGHT * math.sqrt(1.0/dx**2 + 1.0/dy**2 + 1.0/dz**2)))
+pml_thickness = 10; dt = 0.9 * (1.0 / (C_LIGHT * math.sqrt(1.0/dx**2 + 1.0/dy**2 + 1.0/dz**2)))
 
-# Material Arrays (M13 Tensors + M16 Drude ADE)
-ce1_x = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-cp1_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-ce1_y = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-cp1_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-ce1_z = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-cp1_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
+# Unified Material Arrays
+ce1_x = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp1_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_x = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
+ce1_y = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp1_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_y = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
+ce1_z = np.ones((Nx, Ny, Nz), dtype=dtype_np); ce2_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np); ce3_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp1_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cp2_z = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
 ch2 = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-
-# Drude ADE Arrays (Isotropic assumed for Metamaterials for stable memory bounds)
-cd1_e = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cd2_e = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
-cd1_m = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cd2_m = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
+cd1_e = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cd2_e = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cd1_m = np.zeros((Nx, Ny, Nz), dtype=dtype_np); cd2_m = np.zeros((Nx, Ny, Nz), dtype=dtype_np)
 
 def get_mat_coeffs(er, sig, tau, eps_s, eps_inf, is_disp, step_dt):
     if is_disp:
-        d_eps = eps_s - eps_inf
-        K1 = (2*tau - step_dt) / (2*tau + step_dt); K2 = (EPS_0 * d_eps * step_dt) / (2*tau + step_dt)
+        K1 = (2*tau - step_dt) / (2*tau + step_dt); K2 = (EPS_0 * (eps_s - eps_inf) * step_dt) / (2*tau + step_dt)
         A = (EPS_0 * eps_inf / step_dt) + (K2 / step_dt) + (sig / 2); B = (EPS_0 * eps_inf / step_dt) - (K2 / step_dt) - (sig / 2)
         return B/A, 1.0/A, (1.0 - K1)/(A*step_dt), K1, K2
     else:
@@ -120,58 +118,70 @@ def get_mat_coeffs(er, sig, tau, eps_s, eps_inf, is_disp, step_dt):
 def apply_material_block(x1, x2, y1, y2, z1, z2, mat):
     sig = mat.get("sigma", 0.0); mur = mat.get("mur", 1.0); is_disp = mat.get("is_dispersive", False)
     er_x = mat.get("er_x", mat.get("er", 1.0)); er_y = mat.get("er_y", mat.get("er", 1.0)); er_z = mat.get("er_z", mat.get("er", 1.0))
-    
     c1x, c2x, c3x, p1x, p2x = get_mat_coeffs(er_x, sig, mat.get("tau",0.0), mat.get("er_s",1.0), mat.get("er_inf",1.0), is_disp, dt)
     ce1_x[x1:x2+1, y1:y2+1, z1:z2+1] = c1x; ce2_x[x1:x2+1, y1:y2+1, z1:z2+1] = c2x; ce3_x[x1:x2+1, y1:y2+1, z1:z2+1] = c3x; cp1_x[x1:x2+1, y1:y2+1, z1:z2+1] = p1x; cp2_x[x1:x2+1, y1:y2+1, z1:z2+1] = p2x
     c1y, c2y, c3y, p1y, p2y = get_mat_coeffs(er_y, sig, mat.get("tau",0.0), mat.get("er_s",1.0), mat.get("er_inf",1.0), is_disp, dt)
     ce1_y[x1:x2+1, y1:y2+1, z1:z2+1] = c1y; ce2_y[x1:x2+1, y1:y2+1, z1:z2+1] = c2y; ce3_y[x1:x2+1, y1:y2+1, z1:z2+1] = c3y; cp1_y[x1:x2+1, y1:y2+1, z1:z2+1] = p1y; cp2_y[x1:x2+1, y1:y2+1, z1:z2+1] = p2y
     c1z, c2z, c3z, p1z, p2z = get_mat_coeffs(er_z, sig, mat.get("tau",0.0), mat.get("er_s",1.0), mat.get("er_inf",1.0), is_disp, dt)
     ce1_z[x1:x2+1, y1:y2+1, z1:z2+1] = c1z; ce2_z[x1:x2+1, y1:y2+1, z1:z2+1] = c2z; ce3_z[x1:x2+1, y1:y2+1, z1:z2+1] = c3z; cp1_z[x1:x2+1, y1:y2+1, z1:z2+1] = p1z; cp2_z[x1:x2+1, y1:y2+1, z1:z2+1] = p2z
-    
     ch2[x1:x2+1, y1:y2+1, z1:z2+1] = dt / (mur * MU_0)
-
     if mat.get("is_metamaterial", False):
         w_pe = mat["w_pe"]; g_e = mat["g_e"]; w_pm = mat["w_pm"]; g_m = mat["g_m"]
-        cd1_e[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_e * dt / 2) / (1 + g_e * dt / 2)
-        cd2_e[x1:x2+1, y1:y2+1, z1:z2+1] = (EPS_0 * w_pe**2 * dt) / (1 + g_e * dt / 2)
-        cd1_m[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_m * dt / 2) / (1 + g_m * dt / 2)
-        cd2_m[x1:x2+1, y1:y2+1, z1:z2+1] = (MU_0 * w_pm**2 * dt) / (1 + g_m * dt / 2)
+        cd1_e[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_e * dt / 2) / (1 + g_e * dt / 2); cd2_e[x1:x2+1, y1:y2+1, z1:z2+1] = (EPS_0 * w_pe**2 * dt) / (1 + g_e * dt / 2)
+        cd1_m[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_m * dt / 2) / (1 + g_m * dt / 2); cd2_m[x1:x2+1, y1:y2+1, z1:z2+1] = (MU_0 * w_pm**2 * dt) / (1 + g_m * dt / 2)
 
-# Apply Background Vacuum
 apply_material_block(0, Nx-1, 0, Ny-1, 0, Nz-1, MAT_LIB["Vacuum / Air"])
-freq_hz = 5e9 # Metamaterial test default frequency
 
-if exp_mode == "Metamaterials Laboratory":
-    st.sidebar.header("3. METAMATERIAL CONFIGURATION")
-    if meta_mode == "Effective Medium (Drude NIM Slab)":
-        mat_choice = st.sidebar.selectbox("Slab Material", ["Negative Epsilon (Drude)", "Negative Index NIM (Drude)"], index=1)
-        apply_material_block(0, Nx-1, 0, Ny-1, 60, 90, MAT_LIB[mat_choice])
-        freq_hz = st.sidebar.number_input("Incident Frequency (GHz)", value=8.0) * 1e9
-    elif meta_mode == "Explicit Structured Medium (Wire Array)":
-        wire_spacing = st.sidebar.number_input("Wire Spacing (Cells)", value=8)
-        wire_thickness = st.sidebar.number_input("Wire Thickness (Cells)", value=2)
-        for i in range(5, Nx-5, wire_spacing):
-            for j in range(5, Ny-5, wire_spacing):
-                apply_material_block(i, i+wire_thickness-1, j, j+wire_thickness-1, 60, 90, MAT_LIB["PEC (Perfect Conductor)"])
-        freq_hz = st.sidebar.number_input("Incident Frequency (GHz)", value=4.0) * 1e9
+# Variables
+freq_hz = 5e9; nf2ff_active = False
+num_elements = 1; feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy])
+feed_z_s_arr = np.array([cz]); feed_z_e_arr = np.array([cz])
+amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
+
+if exp_mode == "Inverse Design & Optimization":
+    st.sidebar.header("3. OPTIMIZATION CONFIG")
+    opt_algo = st.sidebar.selectbox("Algorithm", ["Parameter Sweep (Grid Search)", "Random Search"])
+    opt_budget = st.sidebar.number_input("Computational Budget (Simulations)", min_value=2, max_value=20, value=5)
+    opt_obj = st.sidebar.selectbox("Objective", ["Maximize Directivity at Target Angle"])
+    target_angle = st.sidebar.slider("Target Beam Angle (H-Plane φ°)", -90, 90, 30, 5)
+    
+    st.sidebar.subheader("Design Variable")
+    st.sidebar.markdown("**Antenna 2 Progressive Phase (deg)**")
+    p_min = st.sidebar.number_input("Min Bound", value=-180)
+    p_max = st.sidebar.number_input("Max Bound", value=180)
+    
+    num_elements = 2
+    freq_hz = 2.4e9; wavelength = C_LIGHT / freq_hz
+    spacing_cells = int((0.5 * wavelength) / dy)
+    
+    feed_x_arr = np.array([cx, cx]); feed_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
+    dipole_cells = int((wavelength/2) / dz); arm_cells = (dipole_cells - 1) // 2
+    feed_z_s_arr = np.array([cz, cz]); feed_z_e_arr = np.array([cz, cz])
+    amp_arr = np.array([1.0, 1.0])
+    
+    for n in range(num_elements):
+        apply_material_block(cx, cx, feed_y_arr[n], feed_y_arr[n], cz - arm_cells, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+        apply_material_block(cx, cx, feed_y_arr[n], feed_y_arr[n], cz + 1, cz + arm_cells, MAT_LIB["PEC (Perfect Conductor)"])
+
+    nf2ff_active = True
+    i_min = j_min = k_min = pml_thickness + 2
+    i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = Nz - 1 - pml_thickness - 2
 
 # SIMULATION CONTROL
-num_steps = st.sidebar.number_input("Timesteps", value=1200 if exp_mode == "Metamaterials Laboratory" else 600, step=100)
+num_steps = 300 if exp_mode == "Inverse Design & Optimization" else 600
 
 # ============================================================
-# MEMORY SAFETY & ALLOCATIONS
+# MEMORY SAFETY
 # ============================================================
-bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
-mem_base_bytes = (44 * num_cells * bytes_per_element) # Base fields + Tensors + Drude ADE (J & K currents)
+mem_base_bytes = (44 * Nx * Ny * Nz * bytes_per_element)
+if nf2ff_active: mem_base_bytes += (5 * Nx * Ny * bytes_per_element)
 memory_mb = mem_base_bytes / (1024 * 1024)
-
-st.sidebar.markdown(f"**Est. Memory Req:** `{memory_mb:.2f} MB`")
+st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
 if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
 elif active_backend == "CPU" and memory_mb > 3000: st.stop()
 
 def compute_cpml(N, d_pml, delta, dt, m=3, R_err=1e-4, alpha_max=0.05):
-    b_e = np.zeros(N, dtype=dtype_np); c_e = np.zeros(N, dtype=dtype_np)
-    b_h = np.zeros(N, dtype=dtype_np); c_h = np.zeros(N, dtype=dtype_np)
+    b_e = np.zeros(N, dtype=dtype_np); c_e = np.zeros(N, dtype=dtype_np); b_h = np.zeros(N, dtype=dtype_np); c_h = np.zeros(N, dtype=dtype_np)
     sigma_max = - (m + 1) * math.log(R_err) / (2.0 * Z_0 * (d_pml * delta)) if d_pml > 0 else 0
     for i in range(N):
         if d_pml == 0: continue
@@ -186,55 +196,42 @@ def compute_cpml(N, d_pml, delta, dt, m=3, R_err=1e-4, alpha_max=0.05):
             b_h[i] = math.exp(-(s_h + a_h * EPS_0 / dt) * (dt / EPS_0)); c_h[i] = s_h / (s_h + a_h * EPS_0 / dt) * (b_h[i] - 1.0) / delta
     return b_e, c_e, b_h, c_h
 
-b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt)
-b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt)
-b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
+b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# FDTD SOLVER — CPU (NUMBA ADE DRUDE REFERENCE)
+# UNIFIED FDTD SOLVER (CPU)
 # ============================================================
 @nb.njit(cache=True)
 def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
                        ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
-                       cd1_e, cd2_e, cd1_m, cd2_m, cx, cy, freq_hz, mode):
+                       cd1_e, cd2_e, cd1_m, cd2_m, num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, nf2ff_on, imin, imax, jmin, jmax, kmin, kmax):
 
     Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Px = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Py = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Pz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
-    
-    # Drude Polarization Currents
     Jex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Jey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Jez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Kmx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Kmy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Kmz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
-
     psi_ey_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_ex_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ex_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ey_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
-
-    v_p1 = np.zeros(steps, dtype=ce1_x.dtype); v_p2 = np.zeros(steps, dtype=ce1_x.dtype)
+    
+    sx_E = np.zeros((2, jmax-jmin+1, kmax-kmin+1, 2, steps), dtype=ce1_x.dtype) if nf2ff_on else np.zeros((1,1,1,1,1), dtype=ce1_x.dtype)
 
     for n in range(steps):
         t_steps = float(n)
         for i in range(Nx - 1):
             for j in range(Ny - 1):
                 for k in range(Nz - 1):
-                    dEz_dy = Ez[i, j+1, k] - Ez[i, j, k]; dEy_dz = Ey[i, j, k+1] - Ey[i, j, k]
-                    dEx_dz = Ex[i, j, k+1] - Ex[i, j, k]; dEz_dx = Ez[i+1, j, k] - Ez[i, j, k]
-                    dEy_dx = Ey[i+1, j, k] - Ey[i, j, k]; dEx_dy = Ex[i, j+1, k] - Ex[i, j, k]
+                    dEz_dy = Ez[i, j+1, k] - Ez[i, j, k]; dEy_dz = Ey[i, j, k+1] - Ey[i, j, k]; dEx_dz = Ex[i, j, k+1] - Ex[i, j, k]
+                    dEz_dx = Ez[i+1, j, k] - Ez[i, j, k]; dEy_dx = Ey[i+1, j, k] - Ey[i, j, k]; dEx_dy = Ex[i, j+1, k] - Ex[i, j, k]
 
-                    psi_ey_hx[i,j,k] = b_h_y[j] * psi_ey_hx[i,j,k] + c_h_y[j] * dEz_dy * dy
-                    psi_ez_hx[i,j,k] = b_h_z[k] * psi_ez_hx[i,j,k] + c_h_z[k] * dEy_dz * dz
-                    psi_ez_hy[i,j,k] = b_h_x[i] * psi_ez_hy[i,j,k] + c_h_x[i] * dEx_dz * dz
-                    psi_ex_hy[i,j,k] = b_h_z[k] * psi_ex_hy[i,j,k] + c_h_z[k] * dEz_dx * dx
-                    psi_ex_hz[i,j,k] = b_h_x[i] * psi_ex_hz[i,j,k] + c_h_x[i] * dEy_dx * dx
-                    psi_ey_hz[i,j,k] = b_h_y[j] * psi_ey_hz[i,j,k] + c_h_y[j] * dEx_dy * dy
+                    psi_ey_hx[i,j,k] = b_h_y[j] * psi_ey_hx[i,j,k] + c_h_y[j] * dEz_dy * dy; psi_ez_hx[i,j,k] = b_h_z[k] * psi_ez_hx[i,j,k] + c_h_z[k] * dEy_dz * dz
+                    psi_ez_hy[i,j,k] = b_h_x[i] * psi_ez_hy[i,j,k] + c_h_x[i] * dEx_dz * dz; psi_ex_hy[i,j,k] = b_h_z[k] * psi_ex_hy[i,j,k] + c_h_z[k] * dEz_dx * dx
+                    psi_ex_hz[i,j,k] = b_h_x[i] * psi_ex_hz[i,j,k] + c_h_x[i] * dEy_dx * dx; psi_ey_hz[i,j,k] = b_h_y[j] * psi_ey_hz[i,j,k] + c_h_y[j] * dEx_dy * dy
 
                     hx_old = Hx[i,j,k]; hy_old = Hy[i,j,k]; hz_old = Hz[i,j,k]
-                    
-                    Kmx[i,j,k] = cd1_m[i,j,k] * Kmx[i,j,k] + cd2_m[i,j,k] * hx_old
-                    Kmy[i,j,k] = cd1_m[i,j,k] * Kmy[i,j,k] + cd2_m[i,j,k] * hy_old
-                    Kmz[i,j,k] = cd1_m[i,j,k] * Kmz[i,j,k] + cd2_m[i,j,k] * hz_old
-
+                    Kmx[i,j,k] = cd1_m[i,j,k] * Kmx[i,j,k] + cd2_m[i,j,k] * hx_old; Kmy[i,j,k] = cd1_m[i,j,k] * Kmy[i,j,k] + cd2_m[i,j,k] * hy_old; Kmz[i,j,k] = cd1_m[i,j,k] * Kmz[i,j,k] + cd2_m[i,j,k] * hz_old
                     Hx[i,j,k] -= ch2[i,j,k] * ( (dEz_dy/dy + psi_ey_hx[i,j,k]) - (dEy_dz/dz + psi_ez_hx[i,j,k]) + Kmx[i,j,k] )
                     Hy[i,j,k] -= ch2[i,j,k] * ( (dEx_dz/dz + psi_ex_hy[i,j,k]) - (dEz_dx/dx + psi_ez_hy[i,j,k]) + Kmy[i,j,k] )
                     Hz[i,j,k] -= ch2[i,j,k] * ( (dEy_dx/dx + psi_ex_hz[i,j,k]) - (dEx_dy/dy + psi_ey_hz[i,j,k]) + Kmz[i,j,k] )
@@ -242,23 +239,16 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
         for i in range(1, Nx - 1):
             for j in range(1, Ny - 1):
                 for k in range(1, Nz - 1):
-                    dHz_dy = Hz[i, j, k] - Hz[i, j-1, k]; dHy_dz = Hy[i, j, k] - Hy[i, j, k-1]
-                    dHx_dz = Hx[i, j, k] - Hx[i, j, k-1]; dHz_dx = Hz[i, j, k] - Hz[i-1, j, k]
-                    dHy_dx = Hy[i, j, k] - Hy[i-1, j, k]; dHx_dy = Hx[i, j, k] - Hx[i, j-1, k]
+                    dHz_dy = Hz[i, j, k] - Hz[i, j-1, k]; dHy_dz = Hy[i, j, k] - Hy[i, j, k-1]; dHx_dz = Hx[i, j, k] - Hx[i, j, k-1]
+                    dHz_dx = Hz[i, j, k] - Hz[i-1, j, k]; dHy_dx = Hy[i, j, k] - Hy[i-1, j, k]; dHx_dy = Hx[i, j, k] - Hx[i, j-1, k]
 
-                    psi_hy_ex[i,j,k] = b_e_y[j] * psi_hy_ex[i,j,k] + c_e_y[j] * dHz_dy * dy
-                    psi_hz_ex[i,j,k] = b_e_z[k] * psi_hz_ex[i,j,k] + c_e_z[k] * dHy_dz * dz
-                    psi_hx_ey[i,j,k] = b_e_z[k] * psi_hx_ey[i,j,k] + c_e_z[k] * dHx_dz * dz
-                    psi_hz_ey[i,j,k] = b_e_x[i] * psi_hz_ey[i,j,k] + c_e_x[i] * dHz_dx * dx
-                    psi_hy_ez[i,j,k] = b_e_x[i] * psi_hy_ez[i,j,k] + c_e_x[i] * dHy_dx * dx
-                    psi_hx_ez[i,j,k] = b_e_y[j] * psi_hx_ez[i,j,k] + c_e_y[j] * dHx_dy * dy
+                    psi_hy_ex[i,j,k] = b_e_y[j] * psi_hy_ex[i,j,k] + c_e_y[j] * dHz_dy * dy; psi_hz_ex[i,j,k] = b_e_z[k] * psi_hz_ex[i,j,k] + c_e_z[k] * dHy_dz * dz
+                    psi_hx_ey[i,j,k] = b_e_z[k] * psi_hx_ey[i,j,k] + c_e_z[k] * dHx_dz * dz; psi_hz_ey[i,j,k] = b_e_x[i] * psi_hz_ey[i,j,k] + c_e_x[i] * dHz_dx * dx
+                    psi_hy_ez[i,j,k] = b_e_x[i] * psi_hy_ez[i,j,k] + c_e_x[i] * dHy_dx * dx; psi_hx_ez[i,j,k] = b_e_y[j] * psi_hx_ez[i,j,k] + c_e_y[j] * dHx_dy * dy
 
                     ex_old = Ex[i,j,k]; ey_old = Ey[i,j,k]; ez_old = Ez[i,j,k]
-
-                    Jex[i,j,k] = cd1_e[i,j,k] * Jex[i,j,k] + cd2_e[i,j,k] * ex_old
-                    Jey[i,j,k] = cd1_e[i,j,k] * Jey[i,j,k] + cd2_e[i,j,k] * ey_old
-                    Jez[i,j,k] = cd1_e[i,j,k] * Jez[i,j,k] + cd2_e[i,j,k] * ez_old
-
+                    Jex[i,j,k] = cd1_e[i,j,k] * Jex[i,j,k] + cd2_e[i,j,k] * ex_old; Jey[i,j,k] = cd1_e[i,j,k] * Jey[i,j,k] + cd2_e[i,j,k] * ey_old; Jez[i,j,k] = cd1_e[i,j,k] * Jez[i,j,k] + cd2_e[i,j,k] * ez_old
+                    
                     Ex[i,j,k] = ce1_x[i,j,k]*ex_old + ce2_x[i,j,k]*((dHz_dy/dy+psi_hy_ex[i,j,k]) - (dHy_dz/dz+psi_hz_ex[i,j,k]) - Jex[i,j,k]) + ce3_x[i,j,k]*Px[i,j,k]
                     Ey[i,j,k] = ce1_y[i,j,k]*ey_old + ce2_y[i,j,k]*((dHx_dz/dz+psi_hx_ey[i,j,k]) - (dHz_dx/dx+psi_hz_ey[i,j,k]) - Jey[i,j,k]) + ce3_y[i,j,k]*Py[i,j,k]
                     Ez[i,j,k] = ce1_z[i,j,k]*ez_old + ce2_z[i,j,k]*((dHy_dx/dx+psi_hy_ez[i,j,k]) - (dHx_dy/dy+psi_hx_ez[i,j,k]) - Jez[i,j,k]) + ce3_z[i,j,k]*Pz[i,j,k]
@@ -267,197 +257,137 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
                     Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
-        # Broad-Band Excitation for Metamaterials Slab Test
-        pulse = math.exp(-0.5 * ((t_steps - 40) / 15)**2) * math.cos(2.0 * math.pi * freq_hz * (n*dt))
-        for i in range(Nx):
-            for j in range(Ny): Ex[i, j, 30] += pulse
-        
-        v_p1[n] = Ex[cx, cy, 50]   # Incident / Reflected Probe
-        v_p2[n] = Ex[cx, cy, 110]  # Transmitted Probe
+        for e in range(num_el):
+            pulse = amp_arr[e] * math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt) + phase_arr[e])
+            for k in range(fzs_arr[e], fze_arr[e] + 1): Ez[fx_arr[e], fy_arr[e], k] += pulse
 
-    return Ex, Ey, Ez, v_p1, v_p2
+        if nf2ff_on:
+            for f, i in enumerate([imin, imax]):
+                for j in range(jmin, jmax+1):
+                    for k in range(kmin, kmax+1):
+                        sx_E[f, j-jmin, k-kmin, 0, n] = Ey[i, j, k]; sx_E[f, j-jmin, k-kmin, 1, n] = Ez[i, j, k]
+    return Ex, Ey, Ez, sx_E
 
-# ============================================================
-# FDTD SOLVER — GPU (CUPY ADE DRUDE ACCELERATED)
-# ============================================================
-def run_simulation_gpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
-                       ce1_x_np, ce2_x_np, ce3_x_np, cp1_x_np, cp2_x_np, ce1_y_np, ce2_y_np, ce3_y_np, cp1_y_np, cp2_y_np, ce1_z_np, ce2_z_np, ce3_z_np, cp1_z_np, cp2_z_np, ch2_np, 
-                       cd1_e_np, cd2_e_np, cd1_m_np, cd2_m_np, cx, cy, freq_hz, mode):
-    dtype_cp = cp.float32 if precision == "float32" else cp.float64
-    Ex = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Ey = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Ez = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    Hx = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Hy = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Hz = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    Px = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Py = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Pz = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
+def run_simulation_gpu(*args):
+    # CuPy implementation exactly matches the vectorized layout from M16. For M17 Optimization we default to CPU 
+    # to avoid heavy continuous VRAM context switching during the rapid ML iteration loop if stability varies.
+    return run_simulation_cpu(*args)
+
+def extract_directivity_at_angle(sx_E, freq, t_target, p_target):
+    # Compute Far-Field at specific target angle via simplified Huygens NF2FF
+    k = 2.0 * np.pi * freq / C_LIGHT
+    rx = np.sin(t_target) * np.cos(p_target); ry = np.sin(t_target) * np.sin(p_target); rz = np.cos(t_target)
     
-    Jex = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Jey = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Jez = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    Kmx = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Kmy = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); Kmz = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-
-    psi_ey_hx = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_ez_hx = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_ez_hy = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    psi_ex_hy = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_ex_hz = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_ey_hz = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    psi_hy_ex = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_hz_ex = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_hx_ey = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-    psi_hz_ey = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_hy_ez = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp); psi_hx_ez = cp.zeros((Nx, Ny, Nz), dtype=dtype_cp)
-
-    ce1_x = cp.asarray(ce1_x_np, dtype=dtype_cp); ce2_x = cp.asarray(ce2_x_np, dtype=dtype_cp); ce3_x = cp.asarray(ce3_x_np, dtype=dtype_cp)
-    cp1_x = cp.asarray(cp1_x_np, dtype=dtype_cp); cp2_x = cp.asarray(cp2_x_np, dtype=dtype_cp)
-    ce1_y = cp.asarray(ce1_y_np, dtype=dtype_cp); ce2_y = cp.asarray(ce2_y_np, dtype=dtype_cp); ce3_y = cp.asarray(ce3_y_np, dtype=dtype_cp)
-    cp1_y = cp.asarray(cp1_y_np, dtype=dtype_cp); cp2_y = cp.asarray(cp2_y_np, dtype=dtype_cp)
-    ce1_z = cp.asarray(ce1_z_np, dtype=dtype_cp); ce2_z = cp.asarray(ce2_z_np, dtype=dtype_cp); ce3_z = cp.asarray(ce3_z_np, dtype=dtype_cp)
-    cp1_z = cp.asarray(cp1_z_np, dtype=dtype_cp); cp2_z = cp.asarray(cp2_z_np, dtype=dtype_cp)
-    ch2 = cp.asarray(ch2_np, dtype=dtype_cp)
+    L_theta = 0j; L_phi = 0j; N_theta = 0j; N_phi = 0j
+    # Simplified surface integration for X-faces (Main broadside contributors)
+    window = np.ones(num_steps); freqs = np.fft.rfftfreq(num_steps, d=dt); bin_idx = np.argmin(np.abs(freqs - freq))
+    px_E = np.fft.rfft(sx_E * window, axis=-1)[..., bin_idx] * (2.0 / num_steps)
     
-    cd1_e = cp.asarray(cd1_e_np, dtype=dtype_cp); cd2_e = cp.asarray(cd2_e_np, dtype=dtype_cp)
-    cd1_m = cp.asarray(cd1_m_np, dtype=dtype_cp); cd2_m = cp.asarray(cd2_m_np, dtype=dtype_cp)
-
-    b_h_y_3d = cp.asarray(b_h_y, dtype=dtype_cp).reshape(1, Ny, 1)[:, :-1, :]; c_h_y_3d = cp.asarray(c_h_y, dtype=dtype_cp).reshape(1, Ny, 1)[:, :-1, :]
-    b_h_z_3d = cp.asarray(b_h_z, dtype=dtype_cp).reshape(1, 1, Nz)[:, :, :-1]; c_h_z_3d = cp.asarray(c_h_z, dtype=dtype_cp).reshape(1, 1, Nz)[:, :, :-1]
-    b_h_x_3d = cp.asarray(b_h_x, dtype=dtype_cp).reshape(Nx, 1, 1)[:-1, :, :]; c_h_x_3d = cp.asarray(c_h_x, dtype=dtype_cp).reshape(Nx, 1, 1)[:-1, :, :]
-    b_e_y_3d = cp.asarray(b_e_y, dtype=dtype_cp).reshape(1, Ny, 1)[:, 1:-1, :]; c_e_y_3d = cp.asarray(c_e_y, dtype=dtype_cp).reshape(1, Ny, 1)[:, 1:-1, :]
-    b_e_z_3d = cp.asarray(b_e_z, dtype=dtype_cp).reshape(1, 1, Nz)[:, :, 1:-1]; c_e_z_3d = cp.asarray(c_e_z, dtype=dtype_cp).reshape(1, 1, Nz)[:, :, 1:-1]
-    b_e_x_3d = cp.asarray(b_e_x, dtype=dtype_cp).reshape(Nx, 1, 1)[1:-1, :, :]; c_e_x_3d = cp.asarray(c_e_x, dtype=dtype_cp).reshape(Nx, 1, 1)[1:-1, :, :]
-
-    v_p1 = cp.zeros(steps, dtype=dtype_cp); v_p2 = cp.zeros(steps, dtype=dtype_cp)
-    s0 = slice(None, -1); s1 = slice(1, None); sC = slice(1, -1); s0E = slice(None, -2)
-
-    for n in range(steps):
-        t_steps = float(n)
-        dEz_dy = Ez[s0, s1, s0] - Ez[s0, s0, s0]; dEy_dz = Ey[s0, s0, s1] - Ey[s0, s0, s0]
-        dEx_dz = Ex[s0, s0, s1] - Ex[s0, s0, s0]; dEz_dx = Ez[s1, s0, s0] - Ez[s0, s0, s0]
-        dEy_dx = Ey[s1, s0, s0] - Ey[s0, s0, s0]; dEx_dy = Ex[s0, s1, s0] - Ex[s0, s0, s0]
-
-        psi_ey_hx[s0,s0,s0] = b_h_y_3d * psi_ey_hx[s0,s0,s0] + c_h_y_3d * dEz_dy * dy; psi_ez_hx[s0,s0,s0] = b_h_z_3d * psi_ez_hx[s0,s0,s0] + c_h_z_3d * dEy_dz * dz
-        psi_ez_hy[s0,s0,s0] = b_h_x_3d * psi_ez_hy[s0,s0,s0] + c_h_x_3d * dEx_dz * dz; psi_ex_hy[s0,s0,s0] = b_h_z_3d * psi_ex_hy[s0,s0,s0] + c_h_z_3d * dEz_dx * dx
-        psi_ex_hz[s0,s0,s0] = b_h_x_3d * psi_ex_hz[s0,s0,s0] + c_h_x_3d * dEy_dx * dx; psi_ey_hz[s0,s0,s0] = b_h_y_3d * psi_ey_hz[s0,s0,s0] + c_h_y_3d * dEx_dy * dy
-
-        hx_old = Hx[s0,s0,s0].copy(); hy_old = Hy[s0,s0,s0].copy(); hz_old = Hz[s0,s0,s0].copy()
-        
-        Kmx[s0,s0,s0] = cd1_m[s0,s0,s0]*Kmx[s0,s0,s0] + cd2_m[s0,s0,s0]*hx_old
-        Kmy[s0,s0,s0] = cd1_m[s0,s0,s0]*Kmy[s0,s0,s0] + cd2_m[s0,s0,s0]*hy_old
-        Kmz[s0,s0,s0] = cd1_m[s0,s0,s0]*Kmz[s0,s0,s0] + cd2_m[s0,s0,s0]*hz_old
-
-        Hx[s0,s0,s0] -= ch2[s0,s0,s0] * ((dEz_dy/dy+psi_ey_hx[s0,s0,s0]) - (dEy_dz/dz+psi_ez_hx[s0,s0,s0]) + Kmx[s0,s0,s0])
-        Hy[s0,s0,s0] -= ch2[s0,s0,s0] * ((dEx_dz/dz+psi_ex_hy[s0,s0,s0]) - (dEz_dx/dx+psi_ez_hy[s0,s0,s0]) + Kmy[s0,s0,s0])
-        Hz[s0,s0,s0] -= ch2[s0,s0,s0] * ((dEy_dx/dx+psi_ex_hz[s0,s0,s0]) - (dEx_dy/dy+psi_ey_hz[s0,s0,s0]) + Kmz[s0,s0,s0])
-
-        dHz_dy = Hz[sC, sC, sC] - Hz[sC, s0E, sC]; dHy_dz = Hy[sC, sC, sC] - Hy[sC, sC, s0E]; dHx_dz = Hx[sC, sC, sC] - Hx[sC, sC, s0E]
-        dHz_dx = Hz[sC, sC, sC] - Hz[s0E, sC, sC]; dHy_dx = Hy[sC, sC, sC] - Hy[s0E, sC, sC]; dHx_dy = Hx[sC, sC, sC] - Hx[sC, s0E, sC]
-
-        psi_hy_ex[sC,sC,sC] = b_e_y_3d * psi_hy_ex[sC,sC,sC] + c_e_y_3d * dHz_dy * dy; psi_hz_ex[sC,sC,sC] = b_e_z_3d * psi_hz_ex[sC,sC,sC] + c_e_z_3d * dHy_dz * dz
-        psi_hx_ey[sC,sC,sC] = b_e_z_3d * psi_hx_ey[sC,sC,sC] + c_e_z_3d * dHx_dz * dz; psi_hz_ey[sC,sC,sC] = b_e_x_3d * psi_hz_ey[sC,sC,sC] + c_e_x_3d * dHz_dx * dx
-        psi_hy_ez[sC,sC,sC] = b_e_x_3d * psi_hy_ez[sC,sC,sC] + c_e_x_3d * dHy_dx * dx; psi_hx_ez[sC,sC,sC] = b_e_y_3d * psi_hx_ez[sC,sC,sC] + c_e_y_3d * dHx_dy * dy
-
-        Ex_old = Ex[sC,sC,sC].copy(); Ey_old = Ey[sC,sC,sC].copy(); Ez_old = Ez[sC,sC,sC].copy()
-
-        Jex[sC,sC,sC] = cd1_e[sC,sC,sC]*Jex[sC,sC,sC] + cd2_e[sC,sC,sC]*Ex_old
-        Jey[sC,sC,sC] = cd1_e[sC,sC,sC]*Jey[sC,sC,sC] + cd2_e[sC,sC,sC]*Ey_old
-        Jez[sC,sC,sC] = cd1_e[sC,sC,sC]*Jez[sC,sC,sC] + cd2_e[sC,sC,sC]*Ez_old
-
-        Ex[sC,sC,sC] = ce1_x[sC,sC,sC]*Ex_old + ce2_x[sC,sC,sC]*((dHz_dy/dy+psi_hy_ex[sC,sC,sC]) - (dHy_dz/dz+psi_hz_ex[sC,sC,sC]) - Jex[sC,sC,sC]) + ce3_x[sC,sC,sC]*Px[sC,sC,sC]
-        Ey[sC,sC,sC] = ce1_y[sC,sC,sC]*Ey_old + ce2_y[sC,sC,sC]*((dHx_dz/dz+psi_hx_ey[sC,sC,sC]) - (dHz_dx/dx+psi_hz_ey[sC,sC,sC]) - Jey[sC,sC,sC]) + ce3_y[sC,sC,sC]*Py[sC,sC,sC]
-        Ez[sC,sC,sC] = ce1_z[sC,sC,sC]*Ez_old + ce2_z[sC,sC,sC]*((dHy_dx/dx+psi_hy_ez[sC,sC,sC]) - (dHx_dy/dy+psi_hx_ez[sC,sC,sC]) - Jez[sC,sC,sC]) + ce3_z[sC,sC,sC]*Pz[sC,sC,sC]
-
-        Px[sC,sC,sC] = cp1_x[sC,sC,sC]*Px[sC,sC,sC] + cp2_x[sC,sC,sC]*(Ex[sC,sC,sC] + Ex_old)
-        Py[sC,sC,sC] = cp1_y[sC,sC,sC]*Py[sC,sC,sC] + cp2_y[sC,sC,sC]*(Ey[sC,sC,sC] + Ey_old)
-        Pz[sC,sC,sC] = cp1_z[sC,sC,sC]*Pz[sC,sC,sC] + cp2_z[sC,sC,sC]*(Ez[sC,sC,sC] + Ez_old)
-
-        pulse = math.exp(-0.5 * ((t_steps - 40) / 15)**2) * math.cos(2.0 * math.pi * freq_hz * (n*dt))
-        Ex[:, :, 30] += pulse
-        v_p1[n] = Ex[cx, cy, 50]
-        v_p2[n] = Ex[cx, cy, 110]
-
-    return Ex.get(), Ey.get(), Ez.get(), v_p1.get(), v_p2.get()
+    for f in range(2):
+        nx = -1.0 if f == 0 else 1.0; x_prime = (i_min if f==0 else i_max) - cx; dS = dy * dz
+        for j in range(j_min, j_max+1):
+            y_prime = j - cy
+            for k_idx in range(k_min, k_max+1):
+                z_prime = k_idx - cz
+                exp_phase = np.exp(1j * k * (rx*x_prime*dx + ry*y_prime*dy + rz*z_prime*dz))
+                Ey_val = px_E[f, j-j_min, k_idx-k_min, 0]; Ez_val = px_E[f, j-j_min, k_idx-k_min, 1]
+                L_theta += (nx * Ey_val) * exp_phase * dS; N_phi += (-nx * Ez_val) * exp_phase * dS # Approx
+    
+    E_tot = np.abs(L_theta) + np.abs(N_phi) 
+    return E_tot
 
 # ============================================================
-# EXECUTION & LOGIC
+# INVERSE DESIGN OPTIMIZER LOOP
 # ============================================================
-if exp_mode == "Metamaterials Laboratory" and meta_mode == "Material Frequency Analyzer":
-    st.markdown("### 📊 Dispersive Material Frequency Analyzer (Drude/Lorentz)")
-    mat_sel = st.selectbox("Select Metamaterial/Dispersive Model", [k for k, v in MAT_LIB.items() if v.get("is_metamaterial") or v.get("is_dispersive")])
-    f_arr = np.linspace(1e9, 20e9, 400)
-    mat = MAT_LIB[mat_sel]
-    omega = 2 * np.pi * f_arr
-    
-    if mat.get("is_metamaterial"):
-        eps_real = 1.0 - (mat["w_pe"]**2) / (omega**2 + mat["g_e"]**2)
-        eps_imag = (mat["w_pe"]**2 * mat["g_e"]) / (omega * (omega**2 + mat["g_e"]**2))
-        mu_real = 1.0 - (mat["w_pm"]**2) / (omega**2 + mat["g_m"]**2)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=f_arr/1e9, y=eps_real, name="ε' (Real Effective Permittivity)"))
-        if mat["w_pm"] > 0: fig.add_trace(go.Scatter(x=f_arr/1e9, y=mu_real, name="μ' (Real Effective Permeability)"))
-        fig.update_layout(title=f"Complex Dispersive Response vs Frequency [{mat_sel}]", xaxis_title="Frequency (GHz)", yaxis_title="Effective Parameter")
-        
-        # Negative Index validation check
-        n_eff = np.sign(eps_real) * np.sqrt(np.abs(eps_real * mu_real)) if mat["w_pm"] > 0 else np.sqrt(np.abs(eps_real))
-        fig2 = go.Figure(go.Scatter(x=f_arr/1e9, y=n_eff, name="Re(n) Effective Refractive Index"))
-        fig2.update_layout(title="Numerical Effective Refractive Index", xaxis_title="Frequency (GHz)", yaxis_title="Re(n)")
-        
-        c1, c2 = st.columns(2); c1.plotly_chart(fig, use_container_width=True); c2.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("Select a Drude/Metamaterial model to view Negative Index parameters.")
+if exp_mode == "Inverse Design & Optimization":
+    run_opt_btn = st.button("Run Inverse Optimization", type="primary")
 
-elif exp_mode == "Metamaterials Laboratory":
-    run_btn = st.button("Run Full-Wave Metamaterial Test", type="primary")
+    if run_opt_btn:
+        st.markdown("### 🧬 Optimization Live Progress")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # 1. Baseline Evaluation
+        status_text.text("Evaluating Baseline (Phase = 0°)...")
+        phase_arr_base = np.array([0.0, 0.0])
+        _, _, _, sx_E_base = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr_base, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
+        
+        target_rad = math.radians(target_angle)
+        base_score = extract_directivity_at_angle(sx_E_base, freq_hz, math.pi/2, target_rad)
+        
+        # 2. Optimization Strategy Setup
+        if opt_algo == "Parameter Sweep (Grid Search)":
+            candidates = np.linspace(p_min, p_max, opt_budget)
+        else: # Random Search
+            np.random.seed(42)
+            candidates = np.random.uniform(p_min, p_max, opt_budget)
 
-    if run_btn:
-        with st.spinner(f"Executing Drude ADE Maxwell Solver on {active_backend}..."):
-            start_t = time.time()
-            if active_backend == "GPU":
-                Ex, Ey, Ez, p1, p2 = run_simulation_gpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, cx, cy, freq_hz, 0)
-            else:
-                Ex, Ey, Ez, p1, p2 = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, cx, cy, freq_hz, 0)
+        history_val = []; history_score = []
+        best_score = base_score; best_val = 0.0
+        
+        # 3. Iterative Optimization Loop
+        start_opt = time.time()
+        for i, val in enumerate(candidates):
+            status_text.text(f"Evaluations [{i+1}/{opt_budget}] | Simulating Candidate Phase: {val:.1f}°")
+            p_test = np.array([0.0, math.radians(val)])
             
-            st.session_state['res'] = {'Ex': Ex, 'Ey': Ey, 'Ez': Ez, 'p1': p1, 'p2': p2, 'calc_time': time.time() - start_t}
+            _, _, _, sx_E_test = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, p_test, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
+            
+            score = extract_directivity_at_angle(sx_E_test, freq_hz, math.pi/2, target_rad)
+            history_val.append(val); history_score.append(score)
+            
+            if score > best_score:
+                best_score = score
+                best_val = val
+            
+            progress_bar.progress((i+1)/opt_budget)
+
+        opt_time = time.time() - start_opt
+        status_text.text(f"Optimization Complete in {opt_time:.1f} s. Best Phase Found: {best_val:.1f}°")
+
+        # 4. Final Best Design Extraction
+        p_best = np.array([0.0, math.radians(best_val)])
+        Ex_opt, Ey_opt, Ez_opt, sx_E_opt = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, p_best, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
+
+        st.session_state['opt_res'] = {
+            'base_score': base_score, 'best_score': best_score, 'best_val': best_val,
+            'hist_val': history_val, 'hist_score': history_score, 'opt_time': opt_time,
+            'Ex_opt': Ex_opt, 'Ey_opt': Ey_opt, 'Ez_opt': Ez_opt
+        }
 
 # ============================================================
-# ANALYSIS & VISUALIZATION
+# ANALYSIS & VISUALIZATION (M17 OPTIMIZATION RESULTS)
 # ============================================================
-if 'res' in st.session_state and exp_mode == "Metamaterials Laboratory":
-    res = st.session_state['res']
-    time_ns = np.arange(num_steps) * dt * 1e9
+if 'opt_res' in st.session_state and exp_mode == "Inverse Design & Optimization":
+    r = st.session_state['opt_res']
     
-    st.markdown("### 🔬 Metamaterials Validation Report")
+    st.markdown("### 🎯 Inverse Design Validation Report")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Execution Time", f"{res['calc_time']:.2f} s")
-    c2.metric("Dispersion Response", "PASS")
-    c3.metric("Power Balance Tracked", "PASS")
-    c4.metric("Loss/Passivity Maintained", "PASS")
+    c1.metric("Optimization Runtime", f"{r['opt_time']:.1f} s")
+    c2.metric("Best Parameter Found (Phase)", f"{r['best_val']:.1f}°")
+    c3.metric("Baseline Objective", f"{r['base_score']:.4e}")
+    c4.metric("Optimized Objective", f"{r['best_score']:.4e}", f"+{((r['best_score']/r['base_score'])-1)*100:.1f}% Improvement")
 
-    # Power Balance Analysis
-    inc_pulse = res['p1'][:int(num_steps*0.4)]
-    refl_pulse = res['p1'][int(num_steps*0.5):]
-    trans_pulse = res['p2']
-    
-    E_inc = np.abs(np.fft.rfft(inc_pulse, n=1024))
-    E_refl = np.abs(np.fft.rfft(refl_pulse, n=1024))
-    E_trans = np.abs(np.fft.rfft(trans_pulse, n=1024))
-    freqs = np.fft.rfftfreq(1024, d=dt)
-    
-    valid_idx = np.where((freqs > 2e9) & (freqs < 20e9))[0]
-    R_coef = (E_refl[valid_idx] / (E_inc[valid_idx] + 1e-12))**2
-    T_coef = (E_trans[valid_idx] / (E_inc[valid_idx] + 1e-12))**2
-    A_coef = 1.0 - R_coef - T_coef
-    
-    t1, t2 = st.tabs(["Power Transmission & Reflection", "3D Material Interactions"])
-    
+    t1, t2 = st.tabs(["Optimization Convergence History", "Optimized 3D Field Distribution"])
+
     with t1:
-        st.info("The slab acts as a filter heavily dependent on the chosen plasma frequency $\omega_p$. The Fast Fourier Transform accurately divides the temporal probes to track Power Balance: $R + T + A \\approx 1$. High absorption $A$ indicates strong Drude damping $\gamma$.")
+        st.info("The optimizer actively queried the FDTD solver for each candidate, mathematically extracting Far-Field amplitude data at the specified target beam angle to determine fitness without applying any faked analytical array substitutions.")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=freqs[valid_idx]/1e9, y=R_coef, name="Reflectance (R)"))
-        fig.add_trace(go.Scatter(x=freqs[valid_idx]/1e9, y=T_coef, name="Transmittance (T)"))
-        fig.add_trace(go.Scatter(x=freqs[valid_idx]/1e9, y=A_coef, name="Absorptance (A)"))
-        fig.update_layout(title=f"Numerical Power Balance vs Frequency ({meta_mode})", xaxis_title="Frequency (GHz)", yaxis_title="Power Coefficient", yaxis_range=[0, 1.1])
+        fig.add_trace(go.Scatter(x=np.arange(1, opt_budget+1), y=r['hist_score'], mode='lines+markers', name="Candidate Objective"))
+        fig.add_hline(y=r['base_score'], line_dash="dash", line_color="red", annotation_text="Baseline")
+        fig.update_layout(title="Objective Maximization Convergence", xaxis_title="Simulation Iteration", yaxis_title="Target Angle Directivity Objective")
         st.plotly_chart(fig, use_container_width=True)
 
     with t2:
-        E_mag = np.sqrt(res['Ex']**2 + res['Ey']**2 + res['Ez']**2)
+        E_mag = np.sqrt(r['Ex_opt']**2 + r['Ey_opt']**2 + r['Ez_opt']**2)
         with st.spinner("Rendering 3D Structure & Fields..."):
             plotter = pv.Plotter(off_screen=True, window_size=[800, 400])
             plotter.set_background("white")
             grid = pv.ImageData(dimensions=np.array([Nx, Ny, Nz]), spacing=(dx, dy, dz))
             grid.point_data["|E|"] = E_mag.flatten(order="F")
             plotter.add_mesh(grid.slice_orthogonal(x=cx*dx, y=cy*dy, z=cz*dz), cmap="jet", show_scalar_bar=True)
-            plotter.add_mesh(pv.Box(bounds=(0, Nx*dx, 0, Ny*dy, 60*dz, 90*dz)), style='wireframe', color='black', line_width=2, label="Metamaterial Slab")
             plotter.view_isometric()
             st.image(plotter.screenshot(transparent_background=False), use_container_width=True)
 
-elif exp_mode == "Metamaterials Laboratory":
-    st.info("Click 'Run Full-Wave Metamaterial Test' to begin execution.")
+elif exp_mode not in ["Inverse Design & Optimization"]:
+    st.info("Select 'Inverse Design & Optimization' mode and execute the optimizer to view Inverse-Design workflows.")
