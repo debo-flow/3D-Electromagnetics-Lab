@@ -45,10 +45,13 @@ Extends the material system to support diagonal tensor permittivity matrices ($\
 Upgrades the simulation architecture to support Uniform Linear Arrays (ULA) and electronic Beam Steering.
 
 ## Milestone 15 — Adaptive Mesh Refinement (AMR)
-Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm. 
-* **Static Block AMR:** The solver dynamically superimposes a high-resolution subgrid (2:1 spatial refinement ratio) centrally positioned over complex geometry regions (e.g., the antenna feed). 
-* **2-Way Coarse-Fine Coupling:** Operates mathematically through rigorous bidirectional spatial interpolation. The coarse grid's boundary conditions are passed continuously to the subgrid edge, and the resultant high-resolution subgrid volumetric updates are systematically averaged (restricted) back into the coarse grid.
-* **Accuracy and CFL Considerations:** Demonstrates massive computational memory reduction ($\approx 4\times$) against executing a uniform fine-grid mesh. To eliminate chaotic temporal interpolation artifacts, the base domain dynamically limits its timestep bounds ($\Delta t$) exactly to the fine grid's safety factor when AMR is engaged.
+Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm utilizing 2-Way spatial restriction/prolongation coupling to natively reduce spatial memory footprints inside complex geometric zones.
+
+## Milestone 16 — Metamaterials & Engineered Electromagnetic Media
+Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain.
+* **Drude Negative-Permittivity / Permeability ($\epsilon < 0, \mu < 0$):** Fully integrated via extended Auxiliary Differential Equations (ADE) explicitly tracking electrical polarization currents ($\mathbf{J}_e$) and magnetic polarization currents ($\mathbf{K}_m$). Enables testing materials like artificial plasmas exhibiting frequency-dependent passband responses.
+* **Effective Medium vs Explicit Structures:** Designed to evaluate homogenized effective media blocks side-by-side against explicit sub-wavelength PEC structure assemblies (e.g., Wire Array grids) modeled physically onto the FDTD domain.
+* **FFT Power Balance Validation:** Temporal probes systematically intercept initial incident pulses vs secondary interface reflections to derive $R$, $T$, and $A$ continuously. Validates Power Conservations ($R + T + A \approx 1$) while safely resolving dispersive attenuation behaviors tied directly to collision damping constants ($\gamma$).
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -66,3 +69,4 @@ Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm.
 - [x] Milestone 13 — Anisotropic electromagnetic materials
 - [x] Milestone 14 — Antenna arrays & beamforming
 - [x] Milestone 15 — Adaptive mesh refinement
+- [x] Milestone 16 — Metamaterials & Engineered Electromagnetic Media
