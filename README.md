@@ -12,7 +12,6 @@ Replaced basic PEC boundaries with Convolutional Perfectly Matched Layers (CPML)
 Introduces the first physical antenna into the electromagnetic laboratory: a center-fed half-wave dipole.
 * **Overview:** A half-wave dipole is a fundamental reference antenna used widely in RF engineering. It serves as the perfect baseline for understanding electromagnetic radiation.
 * **FDTD Representation:** The dipole is modeled consistently on the Yee-grid as perfectly conducting (PEC) cells aligned along the Z-axis.
-* **Center Feed Implementation:** A small feed gap at the center is excited using a time-dependent "soft source" (additive current-density approximation) with configurable waveforms to simulate actual antenna current.
 
 ## Milestone 4 — Near-Field Electromagnetic Analysis
 Introduces quantitative near-field sampling, frequency-domain analysis, and energy-flow calculations directly from the FDTD grid.
@@ -35,9 +34,16 @@ Converts the validated NF2FF transformation data into a complete 3D angular ante
 Introduces quantitative antenna performance metrics natively derived from the FDTD electromagnetic simulation.
 * **Radiation Intensity ($U$):** Calculated directly from the far-field magnitude $U(\theta, \phi) = r_{obs}^2 \frac{|E_{far}|^2}{2Z_0}$.
 * **Total Radiated Power ($P_{rad}$):** Extracted via precise 2D Trapezoidal spherical integration ($P_{rad} = \int \int U(\theta, \phi) \sin\theta d\theta d\phi$) over the entire angular computational grid.
-* **Directivity ($D$):** Mapped spatially based on the angular concentration of radiation using $D = \frac{4\pi U}{P_{rad}}$. Extracts peak angular direction and theoretical maximum ($D_{max}$ / $dBi$).
-* **Angular Convergence:** Implements a localized convergence tool validating stability across 10°, 5°, and 2° angular grid integrations.
+* **Directivity ($D$):** Mapped spatially based on the angular concentration of radiation using $D = \frac{4\pi U}{P_{rad}}$. 
 * **Scientific Limitations:** Extracting absolute Antenna Gain and Radiation Efficiency requires a structurally pristine extraction of accepted power $P_{in}$. The base FDTD implementation utilizes a numerical proxy soft-source to enforce CFL stability without disruptive hard boundaries. Therefore, efficiency and gain metrics are explicitly restricted and withheld from the dashboard to prevent publishing mathematically flawed or unphysical "textbook" assumptions. 
+
+## Milestone 8 — Rectangular Microstrip Patch Antenna
+Replaces wire-antenna modeling with complex planar structures featuring dielectrics and finite ground boundaries.
+* **Patch Anatomy:** Implements a conductive patch, finite conductive ground plane, dielectric substrate ($\epsilon_r$), and a localized vertical feed bridging the ground to the patch directly into the FDTD Cartesian grid.
+* **Analytical Design Tools:** Provides a UI interface that calculates ideal theoretical dimensions (Width, Length, Effective Dielectric Constant) via standard microstrip Transmission-Line approximations. 
+* **FDTD Dielectric Material Handling:** Upgrades the Numba Maxwell curl-solver to process spatially varying dielectric constants ($\epsilon_r$) actively during E-field updates within the designated substrate bounding box.
+* **NF2FF Compatibility:** The equivalence surface validation strictly ensures the finite ground plane is completely enclosed, allowing correct modeling of back-lobe radiation inherent to finite-ground microstrip designs.
+* **Performance Comparisons:** Compares the theoretically estimated resonant frequency to the FDTD-derived spectral resonance proxy (extracted via FFT feed response). 
 
 ## Project Roadmap
 
@@ -48,6 +54,6 @@ Introduces quantitative antenna performance metrics natively derived from the FD
 - [x] Milestone 5 — Near-to-far-field transformation
 - [x] Milestone 6 — 3D radiation pattern
 - [x] Milestone 7 — Gain/directivity/efficiency
-- [ ] Milestone 8 — Patch antenna
+- [x] Milestone 8 — Rectangular microstrip patch antenna
 - [ ] Milestone 9 — Advanced materials
 - [ ] Milestone 10 — GPU acceleration
