@@ -24,7 +24,7 @@ Introduces quantitative near-field sampling, frequency-domain analysis, and ener
 * **Probes & Time-Domain:** Multi-point probes strictly track the transient and later-time field evolution at specific geometrical locations (Feed, Axis, Perpendicular).
 * **Frequency Analysis (FFT):** Calculates the continuous-time frequency spectrum E(f) and phase using a rectangular window optimal for FDTD transient pulses.
 * **Electromagnetic Energy Density:** Calculates and maps the instantaneous energy density $u = \frac{1}{2}(\epsilon|E|^2 + \mu|H|^2)$ across 2D slices.
-* **Poynting Vector (S):** Implements both the instantaneous ($S = E \times H$) and the strictly time-averaged ($<S>$) Poynting vector over a configurable later-time window to analyze actual energy-flow density.
+* **Poynting Vector (S):** Implements both the instantaneous ($S = E \times H$) and the strictly time-averaged ($\langle S \rangle$) Poynting vector over a configurable later-time window to analyze actual energy-flow density.
 * **Scientific Limitations:** Numerical dispersion, Yee-cell offsets (half-step spatial differences), and finite simulation duration mean FFT and phase results are computational approximations, not exact infinite-time continuous solutions.
 
 ## Milestone 5 — Near-to-Far-Field Transformation (NF2FF)
@@ -40,7 +40,7 @@ Implements a scientifically rigorous transformation of sampled near-field data i
 - [x] Milestone 2 — PML absorbing boundary
 - [x] Milestone 3 — Half-wave dipole antenna
 - [x] Milestone 4 — Near-field analysis
-- [x] Milestone 5 — Far-field transformation
+- [x] Milestone 5 — Near-to-far-field transformation
 - [ ] Milestone 6 — 3D radiation pattern
 - [ ] Milestone 7 — Gain/directivity/efficiency
 - [ ] Milestone 8 — Patch antenna
