@@ -43,9 +43,12 @@ Extends the material system to support diagonal tensor permittivity matrices ($\
 
 ## Milestone 14 — Antenna Arrays & Beamforming
 Upgrades the simulation architecture to support Uniform Linear Arrays (ULA) and electronic Beam Steering.
-* **Array Geometry & Excitation:** Supports dynamic spacing ($d$) configurations arrays (up to 16 elements). Each element calculates specific excitation delays (progressive phase $\beta$) required to execute electronic beam steering targeting an exact input azimuth $\phi_0$.
-* **Analytical Array Factor vs Full-Wave Correlation:** Strictly delineates between pure Ideal Pattern calculations (Element Pattern $\times$ AF) and the physical Multi-Source Coupled FDTD implementation, preserving mutual coupling integrity in the near-field visualization.
-* **Sidelobe & Grating Lobe Constraints:** Validates main-lobe directional accuracy, tracks HPBW constraints natively from polar cuts, and proactively flags sub-optimal inter-element spacing variables ($d \ge \lambda$) via safety warnings to prevent unintended grating lobes.
+
+## Milestone 15 — Adaptive Mesh Refinement (AMR)
+Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm. 
+* **Static Block AMR:** The solver dynamically superimposes a high-resolution subgrid (2:1 spatial refinement ratio) centrally positioned over complex geometry regions (e.g., the antenna feed). 
+* **2-Way Coarse-Fine Coupling:** Operates mathematically through rigorous bidirectional spatial interpolation. The coarse grid's boundary conditions are passed continuously to the subgrid edge, and the resultant high-resolution subgrid volumetric updates are systematically averaged (restricted) back into the coarse grid.
+* **Accuracy and CFL Considerations:** Demonstrates massive computational memory reduction ($\approx 4\times$) against executing a uniform fine-grid mesh. To eliminate chaotic temporal interpolation artifacts, the base domain dynamically limits its timestep bounds ($\Delta t$) exactly to the fine grid's safety factor when AMR is engaged.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -62,3 +65,4 @@ Upgrades the simulation architecture to support Uniform Linear Arrays (ULA) and 
 - [x] Milestone 12 — Dispersive electromagnetic materials
 - [x] Milestone 13 — Anisotropic electromagnetic materials
 - [x] Milestone 14 — Antenna arrays & beamforming
+- [x] Milestone 15 — Adaptive mesh refinement
