@@ -33,11 +33,14 @@ Generalizes the FDTD kernel to evaluate wave propagation through spatially varyi
 Accelerates the immensely computation-heavy 3D FDTD loop using array-based vectorization strictly parallelized across GPU hardware frameworks using the `cupy` library as a transparent acceleration layer.
 
 ## Milestone 11 — Advanced Numerical Validation & Benchmarking
-Transforms the existing validation system into a rigorous, reproducible numerical verification framework to prove the mathematical integrity of the FDTD kernel.
-* **Analytical Plane-Wave Validation:** Evaluates a uniform 1D plane wave passing through probes to numerically measure phase velocity ($v = \Delta z / \Delta t$) and intrinsic wave impedance ($\eta = |E_x| / |H_y|$). Assesses discretization-induced offsets natively compared to vacuum constants ($c$ and $Z_0$).
-* **Boundary & Material Validation:** Verifies exact reflection mechanics natively processed by the localized integration coefficients. Accurately duplicates the theoretical Fresnel reflection coefficient ($R_{th} \approx 0.333$ for $\epsilon_r = 4.0$) entirely dynamically without hard-coded material math.
-* **CPML Reflection Verification:** Isolates post-interface transmitted waves traveling into the boundary, actively verifying that boundary reflection decay coefficients exceed $-60$ dB, proving true anechoic absorption.
-* **Precision & Architectural Consistency:** Computes strict Maximum Absolute and RMS Error constraints bounding Numba CPU computations (float64) against CuPy GPU executions (float32), documenting error constraints safely within negligible boundaries ($< 10^{-5}$). 
+Transforms the existing validation system into a rigorous, reproducible numerical verification framework to prove the mathematical integrity of the FDTD kernel against free-space and interface reflections.
+
+## Milestone 12 — Dispersive Electromagnetic Materials
+Extends the material system so that electromagnetic properties can depend heavily on frequency.
+* **Debye Model Integration:** Fully implements the Debye dispersion relation $\epsilon(\omega) = \epsilon_\infty + \frac{\epsilon_s - \epsilon_\infty}{1 + j\omega\tau}$ dynamically.
+* **Auxiliary Differential Equation (ADE):** Time-domain equations were entirely restructured to track internal polarization arrays ($P_x, P_y, P_z$). The Yee-grid couples these variables continuously into Ampere's law, meaning fields evolve natively against dispersive friction without requiring offline fake constants.
+* **Material Dispersion Analyzer:** New UI tab calculates the analytical Real ($\epsilon'$) and Imaginary ($\epsilon''$) permittivity constraints across wideband frequency sweeps before executing simulations.
+* **GPU & PML Compatibility:** The heavy memory overhead of storing previous field states and 3D polarization states is handled implicitly by the GPU CuPy execution. CPML naturally absorbs heavily attenuated dispersive waves exactly as it does free-space waves.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -51,3 +54,4 @@ Transforms the existing validation system into a rigorous, reproducible numerica
 - [x] Milestone 9 — Advanced electromagnetic materials
 - [x] Milestone 10 — GPU acceleration
 - [x] Milestone 11 — Advanced numerical validation & benchmarking
+- [x] Milestone 12 — Dispersive electromagnetic materials
