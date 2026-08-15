@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 17 — Inverse Electromagnetic Design & Optimization
+Milestone 18 — Electromagnetic Topology Optimization
 """
 
 import streamlit as st
@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 import math
 import time
 import pandas as pd
-import random
 
 # ============================================================
 # IMPORTS & GPU DETECTION
@@ -45,6 +44,7 @@ Z_0 = math.sqrt(MU_0 / EPS_0)
 MAT_LIB = {
     "Vacuum / Air": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "FR-4 (Lossy)": {"er": 4.4, "mur": 1.0, "sigma": 0.005, "is_dispersive": False, "is_metamaterial": False},
+    "High-K Dielectric (Topology)": {"er": 9.0, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "PEC (Perfect Conductor)": {"er": 1.0, "mur": 1.0, "sigma": -1.0, "is_dispersive": False, "is_metamaterial": False},
     "Anisotropic Sapphire (Tensor)": {"er_x": 9.3, "er_y": 11.5, "er_z": 9.3, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "Dispersive Water (Debye)": {"er_s": 78.4, "er_inf": 4.6, "tau": 8.1e-12, "sigma": 0.05, "mur": 1.0, "is_dispersive": True, "is_metamaterial": False},
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 17 — Inverse Electromagnetic Design & Optimization")
+st.markdown("### Milestone 18 — Electromagnetic Topology Optimization")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -69,6 +69,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Electromagnetic Topology Optimization",
     "Inverse Design & Optimization",
     "Metamaterials Laboratory",
     "Adaptive Mesh Refinement (AMR)",
@@ -88,7 +89,7 @@ elif exp_mode == "Advanced Validation Laboratory":
 # GRID & DOMAIN SETUP
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization"]:
+if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization", "Electromagnetic Topology Optimization"]:
     Nx = Ny = 40; Nz = 40 if exp_mode == "Inverse Design & Optimization" else 140
     dx = dy = dz = 0.005 
 else:
@@ -132,49 +133,58 @@ def apply_material_block(x1, x2, y1, y2, z1, z2, mat):
 
 apply_material_block(0, Nx-1, 0, Ny-1, 0, Nz-1, MAT_LIB["Vacuum / Air"])
 
-# Variables
+# SIMULATION CONTROL
+num_steps = 300 if exp_mode in ["Inverse Design & Optimization", "Electromagnetic Topology Optimization"] else 600
 freq_hz = 5e9; nf2ff_active = False
 num_elements = 1; feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy])
-feed_z_s_arr = np.array([cz]); feed_z_e_arr = np.array([cz])
+feed_z_s_arr = np.array([30]); feed_z_e_arr = np.array([30])
 amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
 
-if exp_mode == "Inverse Design & Optimization":
-    st.sidebar.header("3. OPTIMIZATION CONFIG")
-    opt_algo = st.sidebar.selectbox("Algorithm", ["Parameter Sweep (Grid Search)", "Random Search"])
-    opt_budget = st.sidebar.number_input("Computational Budget (Simulations)", min_value=2, max_value=20, value=5)
-    opt_obj = st.sidebar.selectbox("Objective", ["Maximize Directivity at Target Angle"])
-    target_angle = st.sidebar.slider("Target Beam Angle (H-Plane φ°)", -90, 90, 30, 5)
+# ============================================================
+# TOPOLOGY OPTIMIZATION SETUP
+# ============================================================
+if exp_mode == "Electromagnetic Topology Optimization":
+    st.sidebar.header("3. TOPOLOGY OPTIMIZATION CONFIG")
+    top_budget = st.sidebar.number_input("Computational Budget (Simulations)", min_value=2, max_value=50, value=15)
+    top_obj = st.sidebar.selectbox("Objective", ["Maximize Field Intensity (Transmission Focus)"])
     
-    st.sidebar.subheader("Design Variable")
-    st.sidebar.markdown("**Antenna 2 Progressive Phase (deg)**")
-    p_min = st.sidebar.number_input("Min Bound", value=-180)
-    p_max = st.sidebar.number_input("Max Bound", value=180)
+    st.sidebar.subheader("Design Region & Constraints")
+    vol_frac = st.sidebar.slider("Maximum Material Volume Fraction", 0.1, 1.0, 0.4, 0.05)
+    macro_res = st.sidebar.selectbox("Macro-Voxel Resolution (N x N)", [4, 8, 10], index=1)
     
-    num_elements = 2
-    freq_hz = 2.4e9; wavelength = C_LIGHT / freq_hz
-    spacing_cells = int((0.5 * wavelength) / dy)
+    # Topology Design Region Bounds
+    tx_min, tx_max = pml_thickness + 2, Nx - pml_thickness - 2
+    ty_min, ty_max = pml_thickness + 2, Ny - pml_thickness - 2
+    tz_min, tz_max = 60, 80
     
-    feed_x_arr = np.array([cx, cx]); feed_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
-    dipole_cells = int((wavelength/2) / dz); arm_cells = (dipole_cells - 1) // 2
-    feed_z_s_arr = np.array([cz, cz]); feed_z_e_arr = np.array([cz, cz])
-    amp_arr = np.array([1.0, 1.0])
+    # SIMP Interpolation Parameters
+    eps_bg = MAT_LIB["Vacuum / Air"]["er"]
+    eps_des = MAT_LIB["High-K Dielectric (Topology)"]["er"]
+    simp_p = 3.0
     
-    for n in range(num_elements):
-        apply_material_block(cx, cx, feed_y_arr[n], feed_y_arr[n], cz - arm_cells, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-        apply_material_block(cx, cx, feed_y_arr[n], feed_y_arr[n], cz + 1, cz + arm_cells, MAT_LIB["PEC (Perfect Conductor)"])
-
-    nf2ff_active = True
-    i_min = j_min = k_min = pml_thickness + 2
-    i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = Nz - 1 - pml_thickness - 2
-
-# SIMULATION CONTROL
-num_steps = 300 if exp_mode == "Inverse Design & Optimization" else 600
+    def apply_topology_density(rho_macro):
+        # Upscale macro voxels to FDTD Grid (acting as implicit feature-size filter)
+        scale_x = (tx_max - tx_min) // macro_res
+        scale_y = (ty_max - ty_min) // macro_res
+        rho_grid = np.kron(rho_macro, np.ones((scale_x, scale_y)))
+        
+        # Apply SIMP Material Penalty Interpolation
+        eps_eff = eps_bg + (rho_grid ** simp_p) * (eps_des - eps_bg)
+        
+        for i in range(rho_grid.shape[0]):
+            for j in range(rho_grid.shape[1]):
+                c1x, c2x, _, _, _ = get_mat_coeffs(eps_eff[i,j], 0.0, 0.0, 1.0, 1.0, False, dt)
+                x_idx = tx_min + i; y_idx = ty_min + j
+                
+                # Apply across the slab thickness
+                ce1_x[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_x[x_idx, y_idx, tz_min:tz_max] = c2x
+                ce1_y[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_y[x_idx, y_idx, tz_min:tz_max] = c2x
+                ce1_z[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_z[x_idx, y_idx, tz_min:tz_max] = c2x
 
 # ============================================================
 # MEMORY SAFETY
 # ============================================================
 mem_base_bytes = (44 * Nx * Ny * Nz * bytes_per_element)
-if nf2ff_active: mem_base_bytes += (5 * Nx * Ny * bytes_per_element)
 memory_mb = mem_base_bytes / (1024 * 1024)
 st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
 if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
@@ -216,7 +226,7 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
     psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
-    sx_E = np.zeros((2, jmax-jmin+1, kmax-kmin+1, 2, steps), dtype=ce1_x.dtype) if nf2ff_on else np.zeros((1,1,1,1,1), dtype=ce1_x.dtype)
+    val_probe = np.zeros(steps, dtype=ce1_x.dtype)
 
     for n in range(steps):
         t_steps = float(n)
@@ -257,129 +267,146 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
                     Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
+        # Multi-Source Excitation (Plane Wave for Lens Topology)
+        pulse = math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt))
         for e in range(num_el):
-            pulse = amp_arr[e] * math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt) + phase_arr[e])
-            for k in range(fzs_arr[e], fze_arr[e] + 1): Ez[fx_arr[e], fy_arr[e], k] += pulse
+            for k in range(fzs_arr[e], fze_arr[e] + 1): Ex[fx_arr[e], fy_arr[e], k] += pulse
 
-        if nf2ff_on:
-            for f, i in enumerate([imin, imax]):
-                for j in range(jmin, jmax+1):
-                    for k in range(kmin, kmax+1):
-                        sx_E[f, j-jmin, k-kmin, 0, n] = Ey[i, j, k]; sx_E[f, j-jmin, k-kmin, 1, n] = Ez[i, j, k]
-    return Ex, Ey, Ez, sx_E
+        val_probe[n] = Ex[cx, cy, 120] # Focal point probe behind the design region
+
+    return Ex, Ey, Ez, val_probe
 
 def run_simulation_gpu(*args):
-    # CuPy implementation exactly matches the vectorized layout from M16. For M17 Optimization we default to CPU 
-    # to avoid heavy continuous VRAM context switching during the rapid ML iteration loop if stability varies.
+    # CuPy implementation exactly matches the vectorized layout. 
+    # For M18 Topology Optimization we default to CPU to avoid VRAM overhead during thousands of rapid ML iteration loops.
     return run_simulation_cpu(*args)
 
-def extract_directivity_at_angle(sx_E, freq, t_target, p_target):
-    # Compute Far-Field at specific target angle via simplified Huygens NF2FF
-    k = 2.0 * np.pi * freq / C_LIGHT
-    rx = np.sin(t_target) * np.cos(p_target); ry = np.sin(t_target) * np.sin(p_target); rz = np.cos(t_target)
-    
-    L_theta = 0j; L_phi = 0j; N_theta = 0j; N_phi = 0j
-    # Simplified surface integration for X-faces (Main broadside contributors)
-    window = np.ones(num_steps); freqs = np.fft.rfftfreq(num_steps, d=dt); bin_idx = np.argmin(np.abs(freqs - freq))
-    px_E = np.fft.rfft(sx_E * window, axis=-1)[..., bin_idx] * (2.0 / num_steps)
-    
-    for f in range(2):
-        nx = -1.0 if f == 0 else 1.0; x_prime = (i_min if f==0 else i_max) - cx; dS = dy * dz
-        for j in range(j_min, j_max+1):
-            y_prime = j - cy
-            for k_idx in range(k_min, k_max+1):
-                z_prime = k_idx - cz
-                exp_phase = np.exp(1j * k * (rx*x_prime*dx + ry*y_prime*dy + rz*z_prime*dz))
-                Ey_val = px_E[f, j-j_min, k_idx-k_min, 0]; Ez_val = px_E[f, j-j_min, k_idx-k_min, 1]
-                L_theta += (nx * Ey_val) * exp_phase * dS; N_phi += (-nx * Ez_val) * exp_phase * dS # Approx
-    
-    E_tot = np.abs(L_theta) + np.abs(N_phi) 
-    return E_tot
+def extract_focal_intensity(probe_history):
+    # Extract the maximum field magnitude at the target focal point
+    return np.max(np.abs(probe_history))
 
 # ============================================================
-# INVERSE DESIGN OPTIMIZER LOOP
+# TOPOLOGY OPTIMIZER LOOP
 # ============================================================
-if exp_mode == "Inverse Design & Optimization":
-    run_opt_btn = st.button("Run Inverse Optimization", type="primary")
+if exp_mode == "Electromagnetic Topology Optimization":
+    run_top_btn = st.button("Run Topology Optimization", type="primary")
 
-    if run_opt_btn:
-        st.markdown("### 🧬 Optimization Live Progress")
+    if run_top_btn:
+        st.markdown("### 🧬 Topology Optimization Live Progress")
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 1. Baseline Evaluation
-        status_text.text("Evaluating Baseline (Phase = 0°)...")
-        phase_arr_base = np.array([0.0, 0.0])
-        _, _, _, sx_E_base = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr_base, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
+        # 1. Baseline Evaluation (Empty Design Region, rho=0)
+        status_text.text("Evaluating Baseline (Empty Space)...")
+        rho_macro_base = np.zeros((macro_res, macro_res), dtype=float)
+        apply_topology_density(rho_macro_base)
         
-        target_rad = math.radians(target_angle)
-        base_score = extract_directivity_at_angle(sx_E_base, freq_hz, math.pi/2, target_rad)
-        
-        # 2. Optimization Strategy Setup
-        if opt_algo == "Parameter Sweep (Grid Search)":
-            candidates = np.linspace(p_min, p_max, opt_budget)
-        else: # Random Search
-            np.random.seed(42)
-            candidates = np.random.uniform(p_min, p_max, opt_budget)
+        # Plane wave source setup for lens focusing
+        feed_x_arr = np.repeat(np.arange(10, 30), 20)
+        feed_y_arr = np.tile(np.arange(10, 30), 20)
+        num_elements = len(feed_x_arr)
+        feed_z_s_arr = np.full(num_elements, 30); feed_z_e_arr = np.full(num_elements, 30)
+        amp_arr = np.ones(num_elements); phase_arr = np.zeros(num_elements)
 
-        history_val = []; history_score = []
-        best_score = base_score; best_val = 0.0
+        _, _, _, p_base = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
+        
+        base_score = extract_focal_intensity(p_base)
+        
+        # 2. Stochastic Hill-Climbing Topology Optimization Setup
+        np.random.seed(42)
+        current_rho = np.random.uniform(0, 1, (macro_res, macro_res))
+        best_rho = current_rho.copy()
+        best_score = base_score
+        
+        history_score = []; history_vf = []
         
         # 3. Iterative Optimization Loop
         start_opt = time.time()
-        for i, val in enumerate(candidates):
-            status_text.text(f"Evaluations [{i+1}/{opt_budget}] | Simulating Candidate Phase: {val:.1f}°")
-            p_test = np.array([0.0, math.radians(val)])
+        for i in range(top_budget):
+            status_text.text(f"Topology Evaluations [{i+1}/{top_budget}] | Optimizing Density Map...")
             
-            _, _, _, sx_E_test = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, p_test, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
+            # Perturb (Mutation)
+            test_rho = np.clip(current_rho + np.random.uniform(-0.3, 0.3, (macro_res, macro_res)), 0, 1)
             
-            score = extract_directivity_at_angle(sx_E_test, freq_hz, math.pi/2, target_rad)
-            history_val.append(val); history_score.append(score)
+            # Apply Constraints (Volume Budget)
+            current_vf = np.mean(test_rho)
+            if current_vf > vol_frac:
+                test_rho *= (vol_frac / current_vf)
+                
+            apply_topology_density(test_rho)
+            
+            _, _, _, p_test = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
+            
+            score = extract_focal_intensity(p_test)
+            history_score.append(score); history_vf.append(np.mean(test_rho))
             
             if score > best_score:
                 best_score = score
-                best_val = val
+                best_rho = test_rho.copy()
+                current_rho = test_rho.copy()
+            else:
+                # Stochastic rejection recovery
+                current_rho = best_rho.copy()
             
-            progress_bar.progress((i+1)/opt_budget)
+            progress_bar.progress((i+1)/top_budget)
 
+        # 4. Final Binarization & Re-Simulation
+        status_text.text("Validating Binarized Design...")
+        binarized_rho = np.where(best_rho >= 0.5, 1.0, 0.0)
+        
+        # Enforce Volume Constraint Post-Binarization
+        if np.mean(binarized_rho) > vol_frac:
+            # Iteratively remove weakest cells if constrained
+            sorted_indices = np.argsort(best_rho.flatten())
+            allowed_cells = int(vol_frac * macro_res * macro_res)
+            binarized_rho = np.zeros_like(binarized_rho.flatten())
+            binarized_rho[sorted_indices[-allowed_cells:]] = 1.0
+            binarized_rho = binarized_rho.reshape((macro_res, macro_res))
+            
+        apply_topology_density(binarized_rho)
+        Ex_bin, Ey_bin, Ez_bin, p_bin = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
+        bin_score = extract_focal_intensity(p_bin)
         opt_time = time.time() - start_opt
-        status_text.text(f"Optimization Complete in {opt_time:.1f} s. Best Phase Found: {best_val:.1f}°")
 
-        # 4. Final Best Design Extraction
-        p_best = np.array([0.0, math.radians(best_val)])
-        Ex_opt, Ey_opt, Ez_opt, sx_E_opt = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, p_best, freq_hz, nf2ff_active, i_min, i_max, j_min, j_max, k_min, k_max)
-
-        st.session_state['opt_res'] = {
-            'base_score': base_score, 'best_score': best_score, 'best_val': best_val,
-            'hist_val': history_val, 'hist_score': history_score, 'opt_time': opt_time,
-            'Ex_opt': Ex_opt, 'Ey_opt': Ey_opt, 'Ez_opt': Ez_opt
+        st.session_state['top_opt_res'] = {
+            'base_score': base_score, 'best_cont_score': best_score, 'bin_score': bin_score,
+            'hist_score': history_score, 'hist_vf': history_vf, 'opt_time': opt_time,
+            'best_rho': best_rho, 'binarized_rho': binarized_rho,
+            'Ex_bin': Ex_bin, 'Ey_bin': Ey_bin, 'Ez_bin': Ez_bin
         }
 
 # ============================================================
-# ANALYSIS & VISUALIZATION (M17 OPTIMIZATION RESULTS)
+# ANALYSIS & VISUALIZATION (M18 TOPOLOGY RESULTS)
 # ============================================================
-if 'opt_res' in st.session_state and exp_mode == "Inverse Design & Optimization":
-    r = st.session_state['opt_res']
+if 'top_opt_res' in st.session_state and exp_mode == "Electromagnetic Topology Optimization":
+    r = st.session_state['top_opt_res']
     
-    st.markdown("### 🎯 Inverse Design Validation Report")
+    st.markdown("### 🎯 Topology Optimization Validation Report")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Optimization Runtime", f"{r['opt_time']:.1f} s")
-    c2.metric("Best Parameter Found (Phase)", f"{r['best_val']:.1f}°")
-    c3.metric("Baseline Objective", f"{r['base_score']:.4e}")
-    c4.metric("Optimized Objective", f"{r['best_score']:.4e}", f"+{((r['best_score']/r['base_score'])-1)*100:.1f}% Improvement")
+    c2.metric("Baseline Objective", f"{r['base_score']:.4e}")
+    c3.metric("Optimized (Continuous)", f"{r['best_cont_score']:.4e}", f"+{((r['best_cont_score']/r['base_score'])-1)*100:.1f}%")
+    c4.metric("Manufacturing (Binarized)", f"{r['bin_score']:.4e}", f"+{((r['bin_score']/r['base_score'])-1)*100:.1f}%")
 
-    t1, t2 = st.tabs(["Optimization Convergence History", "Optimized 3D Field Distribution"])
+    t1, t2, t3 = st.tabs(["Optimization Convergence", "Binarized Design Map (ρ)", "Optimized 3D Field Distribution"])
 
     with t1:
-        st.info("The optimizer actively queried the FDTD solver for each candidate, mathematically extracting Far-Field amplitude data at the specified target beam angle to determine fitness without applying any faked analytical array substitutions.")
+        st.info("The optimizer perturbs the material density map $\\rho \in [0, 1]$, maps to $\epsilon_r$ via SIMP interpolation, evaluates FDTD, and applies Volume Constraints (Penalty) to converge on a design maximizing Field Intensity at the focal plane.")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=np.arange(1, opt_budget+1), y=r['hist_score'], mode='lines+markers', name="Candidate Objective"))
-        fig.add_hline(y=r['base_score'], line_dash="dash", line_color="red", annotation_text="Baseline")
-        fig.update_layout(title="Objective Maximization Convergence", xaxis_title="Simulation Iteration", yaxis_title="Target Angle Directivity Objective")
+        fig.add_trace(go.Scatter(x=np.arange(1, len(r['hist_score'])+1), y=r['hist_score'], mode='lines+markers', name="Continuous Objective"))
+        fig.add_hline(y=r['base_score'], line_dash="dash", line_color="red", annotation_text="Baseline (Empty)")
+        fig.add_hline(y=r['bin_score'], line_dash="dash", line_color="green", annotation_text="Final Binarized Validation")
+        fig.update_layout(title="Objective Maximization Convergence", xaxis_title="Simulation Iteration", yaxis_title="Target Focal Intensity Objective")
         st.plotly_chart(fig, use_container_width=True)
-
+        
     with t2:
-        E_mag = np.sqrt(r['Ex_opt']**2 + r['Ey_opt']**2 + r['Ez_opt']**2)
+        st.info("The final continuous material distribution is mathematically projected/binarized ($\\rho \in \{0, 1\}$) to ensure the structure is physically realizable before being explicitly re-simulated for the final Validation Score.")
+        fig2 = go.Figure(data=go.Heatmap(z=r['binarized_rho'], colorscale='Blues', showscale=False))
+        fig2.update_layout(title=f"Final Projected Material Distribution (Volume Fraction: {np.mean(r['binarized_rho']):.2f})", xaxis_title="X Macro-Voxels", yaxis_title="Y Macro-Voxels", width=500, height=500)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    with t3:
+        E_mag = np.sqrt(r['Ex_bin']**2 + r['Ey_bin']**2 + r['Ez_bin']**2)
         with st.spinner("Rendering 3D Structure & Fields..."):
             plotter = pv.Plotter(off_screen=True, window_size=[800, 400])
             plotter.set_background("white")
@@ -389,5 +416,5 @@ if 'opt_res' in st.session_state and exp_mode == "Inverse Design & Optimization"
             plotter.view_isometric()
             st.image(plotter.screenshot(transparent_background=False), use_container_width=True)
 
-elif exp_mode not in ["Inverse Design & Optimization"]:
-    st.info("Select 'Inverse Design & Optimization' mode and execute the optimizer to view Inverse-Design workflows.")
+elif exp_mode == "Electromagnetic Topology Optimization":
+    st.info("Adjust settings in the sidebar and click 'Run Topology Optimization'.")
