@@ -28,10 +28,16 @@ Implements a scientifically rigorous transformation of sampled near-field data i
 ## Milestone 6 — 3D Antenna Radiation Pattern
 Converts the validated NF2FF transformation data into a complete 3D angular antenna radiation pattern.
 * **Spherical Angular Grid:** Fully configurable spatial mapping across $\theta$ (0°–180°) and $\phi$ (0°–360°), yielding high-resolution angular datasets directly from the numerical simulation.
-* **Field Computations:** Computes the total far-field electric magnitude $|E_{far}| = \sqrt{|E_\theta|^2 + |E_\phi|^2}$ supporting both absolute scaling, global normalization, and dB logarithmic representations (with configurable numerical limits to prevent asymptotic singularities).
+* **Field Computations:** Computes the total far-field electric magnitude $|E_{far}| = \sqrt{|E_\theta|^2 + |E_\phi|^2}$ supporting both absolute scaling, global normalization, and dB logarithmic representations.
 * **3D Visualization:** Maps the calculated normalized or dB data onto a true spherical coordinate geometry overlaying the physical computational grid using PyVista.
-* **Polar Analytics:** Implements 2D principal-plane cuts, generating quantitative polar charts for evaluating E-plane and H-plane characteristics inherently tied to the Z-axis dipole rotation. 
-* **Scientific Limitations:** Results describe the FDTD-derived angular distribution, heavily constrained by Yee-grid phase numerical dispersion, bounding box proximity to reactive near fields, and discrete temporal simulation lengths limiting precise FFT evaluation. Metrics like Directivity and absolute Antenna Efficiency are intentionally bypassed here.
+
+## Milestone 7 — Gain, Directivity & Efficiency
+Introduces quantitative antenna performance metrics natively derived from the FDTD electromagnetic simulation.
+* **Radiation Intensity ($U$):** Calculated directly from the far-field magnitude $U(\theta, \phi) = r_{obs}^2 \frac{|E_{far}|^2}{2Z_0}$.
+* **Total Radiated Power ($P_{rad}$):** Extracted via precise 2D Trapezoidal spherical integration ($P_{rad} = \int \int U(\theta, \phi) \sin\theta d\theta d\phi$) over the entire angular computational grid.
+* **Directivity ($D$):** Mapped spatially based on the angular concentration of radiation using $D = \frac{4\pi U}{P_{rad}}$. Extracts peak angular direction and theoretical maximum ($D_{max}$ / $dBi$).
+* **Angular Convergence:** Implements a localized convergence tool validating stability across 10°, 5°, and 2° angular grid integrations.
+* **Scientific Limitations:** Extracting absolute Antenna Gain and Radiation Efficiency requires a structurally pristine extraction of accepted power $P_{in}$. The base FDTD implementation utilizes a numerical proxy soft-source to enforce CFL stability without disruptive hard boundaries. Therefore, efficiency and gain metrics are explicitly restricted and withheld from the dashboard to prevent publishing mathematically flawed or unphysical "textbook" assumptions. 
 
 ## Project Roadmap
 
@@ -41,7 +47,7 @@ Converts the validated NF2FF transformation data into a complete 3D angular ante
 - [x] Milestone 4 — Near-field analysis
 - [x] Milestone 5 — Near-to-far-field transformation
 - [x] Milestone 6 — 3D radiation pattern
-- [ ] Milestone 7 — Gain/directivity/efficiency
+- [x] Milestone 7 — Gain/directivity/efficiency
 - [ ] Milestone 8 — Patch antenna
 - [ ] Milestone 9 — Advanced materials
 - [ ] Milestone 10 — GPU acceleration
