@@ -36,11 +36,14 @@ Accelerates the immensely computation-heavy 3D FDTD loop using array-based vecto
 Transforms the existing validation system into a rigorous, reproducible numerical verification framework to prove the mathematical integrity of the FDTD kernel against free-space and interface reflections.
 
 ## Milestone 12 — Dispersive Electromagnetic Materials
-Extends the material system so that electromagnetic properties can depend heavily on frequency.
-* **Debye Model Integration:** Fully implements the Debye dispersion relation $\epsilon(\omega) = \epsilon_\infty + \frac{\epsilon_s - \epsilon_\infty}{1 + j\omega\tau}$ dynamically.
-* **Auxiliary Differential Equation (ADE):** Time-domain equations were entirely restructured to track internal polarization arrays ($P_x, P_y, P_z$). The Yee-grid couples these variables continuously into Ampere's law, meaning fields evolve natively against dispersive friction without requiring offline fake constants.
-* **Material Dispersion Analyzer:** New UI tab calculates the analytical Real ($\epsilon'$) and Imaginary ($\epsilon''$) permittivity constraints across wideband frequency sweeps before executing simulations.
-* **GPU & PML Compatibility:** The heavy memory overhead of storing previous field states and 3D polarization states is handled implicitly by the GPU CuPy execution. CPML naturally absorbs heavily attenuated dispersive waves exactly as it does free-space waves.
+Extends the material system so that electromagnetic properties can depend heavily on frequency using an Auxiliary Differential Equation (ADE) Debye model integrated continuously into Ampere's law.
+
+## Milestone 13 — Anisotropic Electromagnetic Materials
+Extends the material system to support diagonal tensor permittivity matrices ($\varepsilon̿$), enabling mathematically rigorous direction-dependent wave propagation (Birefringence).
+* **Diagonal Tensor Permittivity:** The Maxwell curl-solver was expanded to execute three fundamentally independent electric field updates per cell. $\epsilon_x, \epsilon_y,$ and $\epsilon_z$ variables are isolated to compute their respective $E_x, E_y, E_z$ fields aligned exactly with the physical staggering of the Yee-grid.
+* **Birefringence Validation:** An advanced material testing module was implemented verifying that orthogonally polarized waves ($E_x$ vs $E_y$) correctly exhibit discrete phase velocity variations ($v_x = c / \sqrt{\varepsilon_x} \neq v_y = c / \sqrt{\varepsilon_y}$) when passing through anisotropic media.
+* **Patch Substrate Compatibility:** Microstrip patch antennas now natively support anisotropic tensor substrates (e.g., Sapphire or composite weaves), dynamically modifying fringing fields and resonance dependent on geometric planar alignment.
+* **Scientific Limitations:** Implementing full off-diagonal tensor components ($\epsilon_{xy}$, $\epsilon_{xz}$) requires complex multi-point spatial interpolations across the staggered Yee-grid. To preserve broad computational stability and strictly avoid sub-cell artifacting, the tensor currently mandates diagonal alignment.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -55,3 +58,4 @@ Extends the material system so that electromagnetic properties can depend heavil
 - [x] Milestone 10 — GPU acceleration
 - [x] Milestone 11 — Advanced numerical validation & benchmarking
 - [x] Milestone 12 — Dispersive electromagnetic materials
+- [x] Milestone 13 — Anisotropic electromagnetic materials
