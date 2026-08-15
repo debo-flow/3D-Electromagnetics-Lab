@@ -41,9 +41,13 @@ Introduces quantitative antenna performance metrics natively derived from the FD
 Replaces wire-antenna modeling with complex planar structures featuring dielectrics and finite ground boundaries.
 * **Patch Anatomy:** Implements a conductive patch, finite conductive ground plane, dielectric substrate ($\epsilon_r$), and a localized vertical feed bridging the ground to the patch directly into the FDTD Cartesian grid.
 * **Analytical Design Tools:** Provides a UI interface that calculates ideal theoretical dimensions (Width, Length, Effective Dielectric Constant) via standard microstrip Transmission-Line approximations. 
-* **FDTD Dielectric Material Handling:** Upgrades the Numba Maxwell curl-solver to process spatially varying dielectric constants ($\epsilon_r$) actively during E-field updates within the designated substrate bounding box.
-* **NF2FF Compatibility:** The equivalence surface validation strictly ensures the finite ground plane is completely enclosed, allowing correct modeling of back-lobe radiation inherent to finite-ground microstrip designs.
-* **Performance Comparisons:** Compares the theoretically estimated resonant frequency to the FDTD-derived spectral resonance proxy (extracted via FFT feed response). 
+
+## Milestone 9 — Advanced Electromagnetic Materials
+Generalizes the FDTD kernel to evaluate wave propagation through spatially varying environments featuring independent permittivity ($\epsilon_r$), permeability ($\mu_r$), and conductivity ($\sigma$).
+* **Material-Aware Maxwell Equations:** Overhauled the core discrete update equations to dynamically evaluate local material coefficients ($C_{e1}, C_{e2}, C_{h2}$) on a cell-by-cell basis. 
+* **Dielectric & Conductive Loss:** Incorporates dielectric loss tangents ($\tan \delta$) mapped effectively to conductive loss ($\sigma = \omega \epsilon \tan \delta$). FDTD inherently suppresses wave amplitudes as currents ($J = \sigma E$) develop in real-time. Energy dissipated by Joule heating is tracked comprehensively inside the diagnostic loop.
+* **Validation Lab Environments:** Features isolated 1D-like simulation modes designed strictly to prove the accuracy of Fresnel interface reflections ($R_{num}$ vs $R_{theoretical}$) and measurable conductor attenuation independent of the antenna structures.
+* **Scientific Limitations:** Complex Dispersive (Drude/Lorentz), anisotropic tensor properties, and sub-cell precision conforming are withheld to safeguard basic Yee-grid broad stability constraints. The CFL condition explicitly checks velocity limits utilizing background free-space speeds ($v_{max} = c$).
 
 ## Project Roadmap
 
@@ -55,5 +59,5 @@ Replaces wire-antenna modeling with complex planar structures featuring dielectr
 - [x] Milestone 6 — 3D radiation pattern
 - [x] Milestone 7 — Gain/directivity/efficiency
 - [x] Milestone 8 — Rectangular microstrip patch antenna
-- [ ] Milestone 9 — Advanced materials
+- [x] Milestone 9 — Advanced electromagnetic materials
 - [ ] Milestone 10 — GPU acceleration
