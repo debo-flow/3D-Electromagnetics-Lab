@@ -30,12 +30,14 @@ Replaces wire-antenna modeling with complex planar structures featuring dielectr
 Generalizes the FDTD kernel to evaluate wave propagation through spatially varying environments featuring independent permittivity ($\epsilon_r$), permeability ($\mu_r$), and conductivity ($\sigma$).
 
 ## Milestone 10 — GPU Accelerated FDTD Engine
-Accelerates the immensely computation-heavy 3D FDTD loop using array-based vectorization strictly parallelized across GPU hardware frameworks.
-* **CuPy Implementation:** Employs the `cupy` library as a transparent, drop-in acceleration layer bypassing Python GIL constraints and serial CPU execution times.
-* **Numerical Equivalency Preserved:** The original Numba CPU solver was definitively preserved as the strict mathematical baseline. GPU operations execute the exact same discrete Maxwell differences natively on VRAM, yielding validation RMS errors consistently under $\approx 10^{-7}$. 
-* **Dynamic Backend Architecture:** Features Auto, CPU, and GPU switching modes. A failure to locate CUDA dependencies natively aborts safely to the CPU backend instead of terminating the laboratory instance. 
-* **Hardware Benchmarking System:** Introduces an isolated CPU vs GPU performance dashboard logging the precise time-deltas to calculate hardware-specific execution speedups.
-* **Requirements Update:** GPU execution now intrinsically requires `cupy-cuda11x` (or relative toolkit versions) installed inside the backend environment. If not provided, CPU fallback engages seamlessly.
+Accelerates the immensely computation-heavy 3D FDTD loop using array-based vectorization strictly parallelized across GPU hardware frameworks using the `cupy` library as a transparent acceleration layer.
+
+## Milestone 11 — Advanced Numerical Validation & Benchmarking
+Transforms the existing validation system into a rigorous, reproducible numerical verification framework to prove the mathematical integrity of the FDTD kernel.
+* **Analytical Plane-Wave Validation:** Evaluates a uniform 1D plane wave passing through probes to numerically measure phase velocity ($v = \Delta z / \Delta t$) and intrinsic wave impedance ($\eta = |E_x| / |H_y|$). Assesses discretization-induced offsets natively compared to vacuum constants ($c$ and $Z_0$).
+* **Boundary & Material Validation:** Verifies exact reflection mechanics natively processed by the localized integration coefficients. Accurately duplicates the theoretical Fresnel reflection coefficient ($R_{th} \approx 0.333$ for $\epsilon_r = 4.0$) entirely dynamically without hard-coded material math.
+* **CPML Reflection Verification:** Isolates post-interface transmitted waves traveling into the boundary, actively verifying that boundary reflection decay coefficients exceed $-60$ dB, proving true anechoic absorption.
+* **Precision & Architectural Consistency:** Computes strict Maximum Absolute and RMS Error constraints bounding Numba CPU computations (float64) against CuPy GPU executions (float32), documenting error constraints safely within negligible boundaries ($< 10^{-5}$). 
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -48,3 +50,4 @@ Accelerates the immensely computation-heavy 3D FDTD loop using array-based vecto
 - [x] Milestone 8 — Rectangular microstrip patch antenna
 - [x] Milestone 9 — Advanced electromagnetic materials
 - [x] Milestone 10 — GPU acceleration
+- [x] Milestone 11 — Advanced numerical validation & benchmarking
