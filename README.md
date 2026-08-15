@@ -27,13 +27,20 @@ Introduces quantitative near-field sampling, frequency-domain analysis, and ener
 * **Poynting Vector (S):** Implements both the instantaneous ($S = E \times H$) and the strictly time-averaged ($<S>$) Poynting vector over a configurable later-time window to analyze actual energy-flow density.
 * **Scientific Limitations:** Numerical dispersion, Yee-cell offsets (half-step spatial differences), and finite simulation duration mean FFT and phase results are computational approximations, not exact infinite-time continuous solutions.
 
+## Milestone 5 — Near-to-Far-Field Transformation (NF2FF)
+Implements a scientifically rigorous transformation of sampled near-field data into an estimated far-field electromagnetic solution.
+* **Electromagnetic Equivalence Principle:** A virtual closed bounding box (Huygens surface) is drawn around the antenna. Equivalent electric ($J_s = \hat{n} \times H$) and magnetic ($M_s = -\hat{n} \times E$) surface currents are calculated on this boundary.
+* **Frequency-Domain Transformation:** Time-domain tangential fields over the entire equivalence surface are converted to the frequency domain (via windowed FFT). Maintaining correct spatial *phase* relationships is critical for accurate constructive and destructive spatial interference calculations in the far field.
+* **Observation Directions & Distance:** Solves asymptotic far-field integrals for specific spherical coordinates ($\theta, \phi$) and user-defined observation distance ($r$). The data is purely calculated, not synthetically extrapolated. 
+* **Scientific Limitations:** Because E and H fields are evaluated at slightly different spatial locations by half a cell on the standard Yee-grid, raw field extraction introduces a minor geometric phase error at very high frequencies. The numerical FFT frequency bin resolution is also limited by the finite simulation duration, avoiding "exact" analytical assumptions.
+
 ## Project Roadmap
 
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
 - [x] Milestone 2 — PML absorbing boundary
 - [x] Milestone 3 — Half-wave dipole antenna
 - [x] Milestone 4 — Near-field analysis
-- [ ] Milestone 5 — Far-field transformation
+- [x] Milestone 5 — Far-field transformation
 - [ ] Milestone 6 — 3D radiation pattern
 - [ ] Milestone 7 — Gain/directivity/efficiency
 - [ ] Milestone 8 — Patch antenna
