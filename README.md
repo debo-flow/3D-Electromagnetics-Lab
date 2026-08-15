@@ -45,13 +45,16 @@ Extends the material system to support diagonal tensor permittivity matrices ($\
 Upgrades the simulation architecture to support Uniform Linear Arrays (ULA) and electronic Beam Steering.
 
 ## Milestone 15 — Adaptive Mesh Refinement (AMR)
-Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm utilizing 2-Way spatial restriction/prolongation coupling to natively reduce spatial memory footprints inside complex geometric zones.
+Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm utilizing 2-Way spatial restriction/prolongation coupling.
 
 ## Milestone 16 — Metamaterials & Engineered Electromagnetic Media
-Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain.
-* **Drude Negative-Permittivity / Permeability ($\epsilon < 0, \mu < 0$):** Fully integrated via extended Auxiliary Differential Equations (ADE) explicitly tracking electrical polarization currents ($\mathbf{J}_e$) and magnetic polarization currents ($\mathbf{K}_m$). Enables testing materials like artificial plasmas exhibiting frequency-dependent passband responses.
-* **Effective Medium vs Explicit Structures:** Designed to evaluate homogenized effective media blocks side-by-side against explicit sub-wavelength PEC structure assemblies (e.g., Wire Array grids) modeled physically onto the FDTD domain.
-* **FFT Power Balance Validation:** Temporal probes systematically intercept initial incident pulses vs secondary interface reflections to derive $R$, $T$, and $A$ continuously. Validates Power Conservations ($R + T + A \approx 1$) while safely resolving dispersive attenuation behaviors tied directly to collision damping constants ($\gamma$).
+Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain via Drude ADE models.
+
+## Milestone 17 — Inverse Electromagnetic Design & Optimization
+Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework.
+* **Controlled Optimization Loop:** Interrogates user-defined parameter search spaces (e.g., Progressive Phase between array elements) using deterministic Grid Sweeps or stochastic Random Searches restricted by strict budget limits to protect execution overhead.
+* **Real Full-Wave Interrogation:** Extracted fitness objectives are derived *exclusively* from running the unified core FDTD solver on each candidate. The system physically generates the field domain, integrates the Far-Field NF2FF, and extracts true simulation quantities rather than depending on fake surrogate models.
+* **Validation & Reproduction:** Actively compares the discovered "Best Candidate" baseline improvement matrix against the 0-state baseline. The winning optimized configuration is explicitly re-simulated as the final step and rendered visually for robust verification. 
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -70,3 +73,4 @@ Introduces fully numerically-defined Engineered Media supporting Dispersive Nega
 - [x] Milestone 14 — Antenna arrays & beamforming
 - [x] Milestone 15 — Adaptive mesh refinement
 - [x] Milestone 16 — Metamaterials & Engineered Electromagnetic Media
+- [x] Milestone 17 — Inverse Electromagnetic Design & Optimization
