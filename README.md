@@ -63,10 +63,13 @@ Upgrades the Topology Optimizer from a stochastic heuristic to an exact continuo
 Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algorithm (NSGA-II) directly integrated with the FDTD core.
 
 ## Milestone 21 — Surrogate-Assisted Electromagnetic Optimization & Reduced-Order Modeling
-Deploys high-speed predictive mathematical modeling to drastically compress full-wave optimization compute times.
-* **Polynomial Ridge Surrogate Integration:** Systematically aggregates datasets from automated random sampling iterations of the FDTD Engine, standardizes features, and fits a high-dimensional Polynomial expansion model to map parameter-to-objective (e.g., Phase $\to$ Gain) geometries. 
-* **Model Validation & Active Exploration:** Features rigorous Train/Test splitting to measure RMSE and $R^2$ accuracy on Unseen Data exclusively. The surrogate evaluates $10,000+$ iterations locally within milliseconds, yielding the predicted global optima. Crucially, the resulting optimum is strictly re-evaluated using one final Full-Wave FDTD pass to confirm physical limits and penalize surrogate extrapolation errors.
-* **Reduced-Order Modeling (POD):** Extracts dominant spatial propagation mechanisms via Singular Value Decomposition (SVD). Records transient Field Snapshot Matrices over thousands of timesteps and reconstructs accurate transient wave evolutions using only $K$ retained dominant modal states, minimizing computational and storage loads drastically.
+Deploys high-speed predictive mathematical modeling (Polynomial Ridge Regression and Proper Orthogonal Decomposition SVD) to drastically compress full-wave optimization compute times.
+
+## Milestone 22 — Uncertainty Quantification & Robust Electromagnetic Design
+Transitions simulation mechanics from idealized nominal designs towards real-world, defect-tolerant robust distributions.
+* **Surrogate-Driven Monte Carlo Analysis:** Instantly calculates $10,000+$ localized manufacturing defect vectors driven by continuous Normal/Gaussian probability distributions natively onto Polynomial surrogate constraints.
+* **Global Sobol Sensitivity Indexes:** Exploits the Saltelli variance-based technique to measure precise mathematical First-Order ($S_i$) and interaction Total-Order ($S_{T_i}$) impact profiles for interacting uncertainty limits, isolating which tolerance defect ruins Gain thresholds most aggressively.
+* **Statistical Yield & Full-Wave Proofing:** Charts strict 5th-95th percentile confidence arrays and validates the statistically detected "Worst Sampled Defect State" explicitly back into an isolated Full-Wave FDTD evaluation to prevent unphysical surrogate projections.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -90,3 +93,4 @@ Deploys high-speed predictive mathematical modeling to drastically compress full
 - [x] Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
 - [x] Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
 - [x] Milestone 21 — Surrogate-Assisted Electromagnetic Optimization & Reduced-Order Modeling
+- [x] Milestone 22 — Uncertainty Quantification & Robust Electromagnetic Design
