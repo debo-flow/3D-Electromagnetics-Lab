@@ -57,13 +57,16 @@ Evolves the laboratory from forward-simulation to a completely self-contained In
 Introduces genuine Topological Inverse-Design capabilities directly integrated into the unified FDTD Maxwell kernel utilizing SIMP heuristic density mapping.
 
 ## Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
-Upgrades the Topology Optimizer from a stochastic hill-climbing heuristic to a mathematically exact continuous Gradient Descent framework powered by an Adjoint Electromagnetic Solver.
+Upgrades the Topology Optimizer from a stochastic heuristic to an exact continuous Gradient Descent framework powered by an Adjoint Electromagnetic Solver.
 
 ## Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
-Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algorithm (NSGA-II) natively integrated with the FDTD core.
-* **Pareto Dominance Evaluation:** Systematically evaluates competing design objectives—such as Maximizing Main-Beam Directivity while simultaneously Minimizing Peak Sidelobe Levels (SLL). The algorithm strictly prevents scalarizing objectives into arbitrary weighted sums, preserving true physical trade-off relationships.
-* **NSGA-II Integration:** The population iteratively progresses through explicit Fast Non-Dominated Sorting and Crowding-Distance diversity preservation mechanics to evolve generation offspring via SBX crossovers and mutations, evaluating each candidate via a rigorous Full-Wave FDTD pass. 
-* **Compromise Re-Simulation:** Displays an interactive 2D Pareto Front graph charting the exact non-dominated boundary against baseline parameters. Users can manually isolate 'Compromise Solutions' from the table and explicitly re-validate the far-field pattern derivation natively without faked analytical substitutions. 
+Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algorithm (NSGA-II) directly integrated with the FDTD core.
+
+## Milestone 21 — Surrogate-Assisted Electromagnetic Optimization & Reduced-Order Modeling
+Deploys high-speed predictive mathematical modeling to drastically compress full-wave optimization compute times.
+* **Polynomial Ridge Surrogate Integration:** Systematically aggregates datasets from automated random sampling iterations of the FDTD Engine, standardizes features, and fits a high-dimensional Polynomial expansion model to map parameter-to-objective (e.g., Phase $\to$ Gain) geometries. 
+* **Model Validation & Active Exploration:** Features rigorous Train/Test splitting to measure RMSE and $R^2$ accuracy on Unseen Data exclusively. The surrogate evaluates $10,000+$ iterations locally within milliseconds, yielding the predicted global optima. Crucially, the resulting optimum is strictly re-evaluated using one final Full-Wave FDTD pass to confirm physical limits and penalize surrogate extrapolation errors.
+* **Reduced-Order Modeling (POD):** Extracts dominant spatial propagation mechanisms via Singular Value Decomposition (SVD). Records transient Field Snapshot Matrices over thousands of timesteps and reconstructs accurate transient wave evolutions using only $K$ retained dominant modal states, minimizing computational and storage loads drastically.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -86,3 +89,4 @@ Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algori
 - [x] Milestone 18 — Electromagnetic Topology Optimization
 - [x] Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
 - [x] Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
+- [x] Milestone 21 — Surrogate-Assisted Electromagnetic Optimization & Reduced-Order Modeling
