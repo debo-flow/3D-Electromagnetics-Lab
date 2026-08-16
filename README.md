@@ -9,7 +9,7 @@ Implemented a robust 3D FDTD solver on a Yee-grid. Includes basic numerical boun
 Replaced basic PEC boundaries with Convolutional Perfectly Matched Layers (CPML). 
 
 ## Milestone 3 — Half-Wave Dipole Antenna
-Introduces the first physical antenna into the electromagnetic laboratory: a center-fed half-wave dipole.
+Introduces the first physical antenna into the electromagnetic laboratory.
 
 ## Milestone 4 — Near-Field Electromagnetic Analysis
 Introduces quantitative near-field sampling, frequency-domain analysis, and energy-flow calculations directly from the FDTD grid.
@@ -51,16 +51,19 @@ Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm ut
 Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain via Drude ADE models.
 
 ## Milestone 17 — Inverse Electromagnetic Design & Optimization
-Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework utilizing dynamic parameter sweeps bounded by strict execution budgets.
+Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework utilizing dynamic parameter sweeps.
 
 ## Milestone 18 — Electromagnetic Topology Optimization
-Introduces genuine Topological Inverse-Design capabilities directly integrated into the unified FDTD Maxwell kernel utilizing SIMP heuristic density mapping and post-binarization manufacturing validation.
+Introduces genuine Topological Inverse-Design capabilities directly integrated into the unified FDTD Maxwell kernel utilizing SIMP heuristic density mapping.
 
 ## Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
 Upgrades the Topology Optimizer from a stochastic hill-climbing heuristic to a mathematically exact continuous Gradient Descent framework powered by an Adjoint Electromagnetic Solver.
-* **Exact Adjoint State Formulation:** Calculates analytical spatial gradients ($\frac{\partial J}{\partial \rho}$) over the entire design space simultaneously by cross-correlating time-reversed objective constraints against forward spatial field histories ($\int E_{fwd}(t) \cdot E_{adj}(T-t) dt$).
-* **Finite-Difference Cross-Validation:** Operates a rigorous "Adjoint vs FD" gradient constraint suite. A standard Finite-Difference perturbation ($\Delta \rho$) explicitly verifies the accuracy of the mathematically derived Adjoint sensitivity mappings to guard against numerical divergence.
-* **Memory Constrained Record Keeping:** Employs precise volumetric slicing to record Forward-State electric fields strictly within the Topology bounds, sidestepping severe RAM exhaustion profiles common to Time-Domain Adjoint inversions. 
+
+## Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
+Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algorithm (NSGA-II) natively integrated with the FDTD core.
+* **Pareto Dominance Evaluation:** Systematically evaluates competing design objectives—such as Maximizing Main-Beam Directivity while simultaneously Minimizing Peak Sidelobe Levels (SLL). The algorithm strictly prevents scalarizing objectives into arbitrary weighted sums, preserving true physical trade-off relationships.
+* **NSGA-II Integration:** The population iteratively progresses through explicit Fast Non-Dominated Sorting and Crowding-Distance diversity preservation mechanics to evolve generation offspring via SBX crossovers and mutations, evaluating each candidate via a rigorous Full-Wave FDTD pass. 
+* **Compromise Re-Simulation:** Displays an interactive 2D Pareto Front graph charting the exact non-dominated boundary against baseline parameters. Users can manually isolate 'Compromise Solutions' from the table and explicitly re-validate the far-field pattern derivation natively without faked analytical substitutions. 
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -82,3 +85,4 @@ Upgrades the Topology Optimizer from a stochastic hill-climbing heuristic to a m
 - [x] Milestone 17 — Inverse Electromagnetic Design & Optimization
 - [x] Milestone 18 — Electromagnetic Topology Optimization
 - [x] Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
+- [x] Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
