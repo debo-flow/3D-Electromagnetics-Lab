@@ -72,10 +72,12 @@ Transitions simulation mechanics from idealized nominal designs towards real-wor
 Deploys a formal, rigorous V&V dashboard strictly differentiating "Code Verification" (numerical mechanics) from "Physical Validation" (experimental measurement comparisons).
 
 ## Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
-Transforms the isolated electromagnetic solver into a formal Reproducible Research Database.
-* **Batch Parameter Sweeps & Checkpointing:** Isolates physical inputs into discrete JSON configurations. Sweeps compute sequentially through a protected execution queue, strictly bounding RAM/VRAM exhaustion states dynamically prior to launch.
-* **Cryptographic Provenance Manifests:** Encapsulates the results alongside MD5-hashed parameters, ensuring execution timestamps, precise numerical seeds, backend tags, and package version states (NumPy, Numba) are irrefutably tracked per run.
-* **Catalog Visualization:** Post-execution batches are automatically structured into analytical dataframes, allowing sweeping comparisons across generated FDTD outputs (e.g., Amplitude vs Target Frequency) and explicit exports of the complete experimental JSON provenance ledger. 
+Transforms the isolated electromagnetic solver into a formal Reproducible Research Database featuring explicit JSON provenance ledgers and Batch execution queuing.
+
+## Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
+Fuses the Surrogate Engine (M21) with the Experiment Database (M24) to create an "Intelligent Acquisition System" utilizing Upper Confidence Bound (UCB) algorithms.
+* **Human-In-The-Loop Active Learning:** The system evaluates thousands of random candidates mathematically in the background, identifying the single geometric parameter with the highest Acquisition Score (balancing Predicted Gain vs Spatial Uncertainty). It explicitly awaits a `RUN FULL-WAVE CONFIRMATION` command, guaranteeing final data is validated physically by the FDTD kernel.
+* **Adaptive Surrogate Regeneration:** Each user-confirmed physical FDTD iteration is structurally appended into the core database. The UI inherently reruns the Surrogate training pass immediately post-append, dynamically re-shaping the mathematical prediction threshold mapping to pinpoint untested sparse boundary locations flawlessly.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -102,4 +104,4 @@ Transforms the isolated electromagnetic solver into a formal Reproducible Resear
 - [x] Milestone 22 — Uncertainty Quantification & Robust Electromagnetic Design
 - [x] Milestone 23 — Electromagnetic Model Verification, Validation & Experimental Correlation
 - [x] Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
-
+- [x] Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
