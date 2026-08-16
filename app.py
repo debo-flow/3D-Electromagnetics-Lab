@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 18 — Electromagnetic Topology Optimization
+Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
 """
 
 import streamlit as st
@@ -10,7 +10,6 @@ import pyvista as pv
 import plotly.graph_objects as go
 import math
 import time
-import pandas as pd
 
 # ============================================================
 # IMPORTS & GPU DETECTION
@@ -48,8 +47,7 @@ MAT_LIB = {
     "PEC (Perfect Conductor)": {"er": 1.0, "mur": 1.0, "sigma": -1.0, "is_dispersive": False, "is_metamaterial": False},
     "Anisotropic Sapphire (Tensor)": {"er_x": 9.3, "er_y": 11.5, "er_z": 9.3, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "Dispersive Water (Debye)": {"er_s": 78.4, "er_inf": 4.6, "tau": 8.1e-12, "sigma": 0.05, "mur": 1.0, "is_dispersive": True, "is_metamaterial": False},
-    "Negative Epsilon (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.5e9, "w_pm": 0.0, "g_m": 0.0, "is_dispersive": False, "is_metamaterial": True},
-    "Negative Index NIM (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.2e9, "w_pm": 2*math.pi*15e9, "g_m": 2*math.pi*0.2e9, "is_dispersive": False, "is_metamaterial": True}
+    "Negative Epsilon (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.5e9, "w_pm": 0.0, "g_m": 0.0, "is_dispersive": False, "is_metamaterial": True}
 }
 
 # ============================================================
@@ -57,7 +55,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 18 — Electromagnetic Topology Optimization")
+st.markdown("### Milestone 19 — Adjoint Electromagnetic Optimization")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -69,27 +67,29 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Adjoint Optimization & Sensitivity",
     "Electromagnetic Topology Optimization",
     "Inverse Design & Optimization",
     "Metamaterials Laboratory",
     "Adaptive Mesh Refinement (AMR)",
     "Antenna Array Laboratory",
     "Single Antenna (Dipole/Patch)", 
-    "Advanced Validation Laboratory",
-    "Material Dispersion Analyzer"
+    "Advanced Validation Laboratory"
 ])
 
-meta_mode = val_suite = None
+meta_mode = val_suite = adj_mode = None
 if exp_mode == "Metamaterials Laboratory":
     meta_mode = st.sidebar.selectbox("Test Type", ["Effective Medium (Drude NIM Slab)", "Explicit Structured Medium (Wire Array)", "Material Frequency Analyzer"])
 elif exp_mode == "Advanced Validation Laboratory":
     val_suite = st.sidebar.selectbox("Validation Suite", ["1. Wave Physics (Velocity)", "2. Boundary & Material", "3. CPU vs GPU", "4. Anisotropic Birefringence"])
+elif exp_mode == "Adjoint Optimization & Sensitivity":
+    adj_mode = st.sidebar.selectbox("Adjoint Workflow", ["1. Adjoint vs Finite-Difference Check", "2. Adjoint Gradient Descent (Topology)"])
 
 # ============================================================
 # GRID & DOMAIN SETUP
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization", "Electromagnetic Topology Optimization"]:
+if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity"]:
     Nx = Ny = 40; Nz = 40 if exp_mode == "Inverse Design & Optimization" else 140
     dx = dy = dz = 0.005 
 else:
@@ -112,7 +112,7 @@ def get_mat_coeffs(er, sig, tau, eps_s, eps_inf, is_disp, step_dt):
         A = (EPS_0 * eps_inf / step_dt) + (K2 / step_dt) + (sig / 2); B = (EPS_0 * eps_inf / step_dt) - (K2 / step_dt) - (sig / 2)
         return B/A, 1.0/A, (1.0 - K1)/(A*step_dt), K1, K2
     else:
-        if sig < 0: return 0.0, 0.0, 0.0, 0.0, 0.0 # PEC
+        if sig < 0: return 0.0, 0.0, 0.0, 0.0, 0.0
         A = (er * EPS_0 / step_dt) + (sig / 2); B = (er * EPS_0 / step_dt) - (sig / 2)
         return B/A, 1.0/A, 0.0, 0.0, 0.0
 
@@ -133,50 +133,48 @@ def apply_material_block(x1, x2, y1, y2, z1, z2, mat):
 
 apply_material_block(0, Nx-1, 0, Ny-1, 0, Nz-1, MAT_LIB["Vacuum / Air"])
 
-# SIMULATION CONTROL
-num_steps = 300 if exp_mode in ["Inverse Design & Optimization", "Electromagnetic Topology Optimization"] else 600
+# Variables
+num_steps = 300 if exp_mode in ["Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity"] else 600
 freq_hz = 5e9; nf2ff_active = False
 num_elements = 1; feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy])
 feed_z_s_arr = np.array([30]); feed_z_e_arr = np.array([30])
 amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
 
 # ============================================================
-# TOPOLOGY OPTIMIZATION SETUP
+# TOPOLOGY & ADJOINT OPTIMIZATION SETUP
 # ============================================================
-if exp_mode == "Electromagnetic Topology Optimization":
-    st.sidebar.header("3. TOPOLOGY OPTIMIZATION CONFIG")
-    top_budget = st.sidebar.number_input("Computational Budget (Simulations)", min_value=2, max_value=50, value=15)
+tx_min, tx_max = pml_thickness + 2, Nx - pml_thickness - 2
+ty_min, ty_max = pml_thickness + 2, Ny - pml_thickness - 2
+tz_min, tz_max = 60, 80
+
+eps_bg = MAT_LIB["Vacuum / Air"]["er"]
+eps_des = MAT_LIB["High-K Dielectric (Topology)"]["er"]
+simp_p = 3.0
+
+if exp_mode in ["Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity"]:
+    st.sidebar.header("3. OPTIMIZATION CONFIG")
+    top_budget = st.sidebar.number_input("Computational Budget (Simulations/Steps)", min_value=2, max_value=100, value=20)
     top_obj = st.sidebar.selectbox("Objective", ["Maximize Field Intensity (Transmission Focus)"])
-    
-    st.sidebar.subheader("Design Region & Constraints")
-    vol_frac = st.sidebar.slider("Maximum Material Volume Fraction", 0.1, 1.0, 0.4, 0.05)
+    vol_frac = st.sidebar.slider("Max Material Volume Fraction", 0.1, 1.0, 0.4, 0.05)
     macro_res = st.sidebar.selectbox("Macro-Voxel Resolution (N x N)", [4, 8, 10], index=1)
     
-    # Topology Design Region Bounds
-    tx_min, tx_max = pml_thickness + 2, Nx - pml_thickness - 2
-    ty_min, ty_max = pml_thickness + 2, Ny - pml_thickness - 2
-    tz_min, tz_max = 60, 80
-    
-    # SIMP Interpolation Parameters
-    eps_bg = MAT_LIB["Vacuum / Air"]["er"]
-    eps_des = MAT_LIB["High-K Dielectric (Topology)"]["er"]
-    simp_p = 3.0
-    
+    # Setup Plane Wave Source for Lens
+    feed_x_arr = np.repeat(np.arange(10, 30), 20)
+    feed_y_arr = np.tile(np.arange(10, 30), 20)
+    num_elements = len(feed_x_arr)
+    feed_z_s_arr = np.full(num_elements, 30); feed_z_e_arr = np.full(num_elements, 30)
+    amp_arr = np.ones(num_elements); phase_arr = np.zeros(num_elements)
+
     def apply_topology_density(rho_macro):
-        # Upscale macro voxels to FDTD Grid (acting as implicit feature-size filter)
         scale_x = (tx_max - tx_min) // macro_res
         scale_y = (ty_max - ty_min) // macro_res
         rho_grid = np.kron(rho_macro, np.ones((scale_x, scale_y)))
-        
-        # Apply SIMP Material Penalty Interpolation
         eps_eff = eps_bg + (rho_grid ** simp_p) * (eps_des - eps_bg)
         
         for i in range(rho_grid.shape[0]):
             for j in range(rho_grid.shape[1]):
                 c1x, c2x, _, _, _ = get_mat_coeffs(eps_eff[i,j], 0.0, 0.0, 1.0, 1.0, False, dt)
                 x_idx = tx_min + i; y_idx = ty_min + j
-                
-                # Apply across the slab thickness
                 ce1_x[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_x[x_idx, y_idx, tz_min:tz_max] = c2x
                 ce1_y[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_y[x_idx, y_idx, tz_min:tz_max] = c2x
                 ce1_z[x_idx, y_idx, tz_min:tz_max] = c1x; ce2_z[x_idx, y_idx, tz_min:tz_max] = c2x
@@ -184,9 +182,14 @@ if exp_mode == "Electromagnetic Topology Optimization":
 # ============================================================
 # MEMORY SAFETY
 # ============================================================
-mem_base_bytes = (44 * Nx * Ny * Nz * bytes_per_element)
+bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
+mem_base_bytes = (44 * num_cells * bytes_per_element)
+if exp_mode == "Adjoint Optimization & Sensitivity":
+    # Adjoint requires storing Forward Field History in the design region
+    mem_base_bytes += ((tx_max-tx_min) * (ty_max-ty_min) * (tz_max-tz_min) * num_steps * bytes_per_element * 3) # Ex, Ey, Ez
+
 memory_mb = mem_base_bytes / (1024 * 1024)
-st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
+st.sidebar.markdown(f"**Est. Memory Req:** `{memory_mb:.2f} MB`")
 if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
 elif active_backend == "CPU" and memory_mb > 3000: st.stop()
 
@@ -209,12 +212,13 @@ def compute_cpml(N, d_pml, delta, dt, m=3, R_err=1e-4, alpha_max=0.05):
 b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# UNIFIED FDTD SOLVER (CPU)
+# UNIFIED FDTD SOLVER (CPU) WITH ADJOINT RECORDING
 # ============================================================
 @nb.njit(cache=True)
 def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
                        ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
-                       cd1_e, cd2_e, cd1_m, cd2_m, num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, nf2ff_on, imin, imax, jmin, jmax, kmin, kmax):
+                       cd1_e, cd2_e, cd1_m, cd2_m, num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, nf2ff_on, imin, imax, jmin, jmax, kmin, kmax,
+                       is_adjoint_run=False, adj_src_signal=None, record_history=False, tx_min=0, tx_max=0, ty_min=0, ty_max=0, tz_min=0, tz_max=0):
 
     Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
@@ -227,6 +231,15 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
     val_probe = np.zeros(steps, dtype=ce1_x.dtype)
+    
+    # History buffers for Adjoint Gradient Formulation
+    hist_shape_x = tx_max - tx_min; hist_shape_y = ty_max - ty_min; hist_shape_z = tz_max - tz_min
+    if record_history:
+        hist_Ex = np.zeros((hist_shape_x, hist_shape_y, hist_shape_z, steps), dtype=ce1_x.dtype)
+        hist_Ey = np.zeros((hist_shape_x, hist_shape_y, hist_shape_z, steps), dtype=ce1_x.dtype)
+        hist_Ez = np.zeros((hist_shape_x, hist_shape_y, hist_shape_z, steps), dtype=ce1_x.dtype)
+    else:
+        hist_Ex = hist_Ey = hist_Ez = np.zeros((1,1,1,1), dtype=ce1_x.dtype)
 
     for n in range(steps):
         t_steps = float(n)
@@ -267,154 +280,183 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
                     Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
-        # Multi-Source Excitation (Plane Wave for Lens Topology)
-        pulse = math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt))
-        for e in range(num_el):
-            for k in range(fzs_arr[e], fze_arr[e] + 1): Ex[fx_arr[e], fy_arr[e], k] += pulse
+        if not is_adjoint_run:
+            # Forward Excitation
+            pulse = math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt))
+            for e in range(num_el):
+                for k in range(fzs_arr[e], fze_arr[e] + 1): Ex[fx_arr[e], fy_arr[e], k] += pulse
+            val_probe[n] = Ex[cx, cy, 120] # Forward Probe at Target
+            
+            if record_history:
+                for bx in range(hist_shape_x):
+                    for by in range(hist_shape_y):
+                        for bz in range(hist_shape_z):
+                            hist_Ex[bx, by, bz, n] = Ex[tx_min+bx, ty_min+by, tz_min+bz]
+                            hist_Ey[bx, by, bz, n] = Ey[tx_min+bx, ty_min+by, tz_min+bz]
+                            hist_Ez[bx, by, bz, n] = Ez[tx_min+bx, ty_min+by, tz_min+bz]
+        else:
+            # Adjoint Excitation: Inject time-reversed target probe signal backward into the domain
+            adj_pulse = adj_src_signal[n]
+            Ex[cx, cy, 120] += adj_pulse
+            
+            if record_history:
+                for bx in range(hist_shape_x):
+                    for by in range(hist_shape_y):
+                        for bz in range(hist_shape_z):
+                            hist_Ex[bx, by, bz, n] = Ex[tx_min+bx, ty_min+by, tz_min+bz]
+                            hist_Ey[bx, by, bz, n] = Ey[tx_min+bx, ty_min+by, tz_min+bz]
+                            hist_Ez[bx, by, bz, n] = Ez[tx_min+bx, ty_min+by, tz_min+bz]
 
-        val_probe[n] = Ex[cx, cy, 120] # Focal point probe behind the design region
-
-    return Ex, Ey, Ez, val_probe
-
-def run_simulation_gpu(*args):
-    # CuPy implementation exactly matches the vectorized layout. 
-    # For M18 Topology Optimization we default to CPU to avoid VRAM overhead during thousands of rapid ML iteration loops.
-    return run_simulation_cpu(*args)
+    return Ex, Ey, Ez, val_probe, hist_Ex, hist_Ey, hist_Ez
 
 def extract_focal_intensity(probe_history):
-    # Extract the maximum field magnitude at the target focal point
-    return np.max(np.abs(probe_history))
+    return np.sum(np.abs(probe_history)**2) * 0.5 * dt # Objective J = 1/2 Integral(E^2) dt
 
 # ============================================================
-# TOPOLOGY OPTIMIZER LOOP
+# ADJOINT GRADIENT SOLVER & TOPOLOGY OPTIMIZER
 # ============================================================
-if exp_mode == "Electromagnetic Topology Optimization":
-    run_top_btn = st.button("Run Topology Optimization", type="primary")
+if exp_mode == "Adjoint Optimization & Sensitivity":
+    st.markdown("### 🧬 Adjoint Electromagnetic Sensitivity Laboratory")
 
-    if run_top_btn:
-        st.markdown("### 🧬 Topology Optimization Live Progress")
+    run_opt_btn = st.button("Execute Adjoint Pipeline", type="primary")
+
+    if run_opt_btn:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 1. Baseline Evaluation (Empty Design Region, rho=0)
-        status_text.text("Evaluating Baseline (Empty Space)...")
-        rho_macro_base = np.zeros((macro_res, macro_res), dtype=float)
-        apply_topology_density(rho_macro_base)
+        # Base Configuration
+        rho_macro = np.zeros((macro_res, macro_res), dtype=float)
         
-        # Plane wave source setup for lens focusing
-        feed_x_arr = np.repeat(np.arange(10, 30), 20)
-        feed_y_arr = np.tile(np.arange(10, 30), 20)
-        num_elements = len(feed_x_arr)
-        feed_z_s_arr = np.full(num_elements, 30); feed_z_e_arr = np.full(num_elements, 30)
-        amp_arr = np.ones(num_elements); phase_arr = np.zeros(num_elements)
+        if adj_mode == "1. Adjoint vs Finite-Difference Check":
+            status_text.text("Running Forward Simulation (Recording Field History)...")
+            rho_macro[macro_res//2, macro_res//2] = 0.5 # Test density
+            apply_topology_density(rho_macro)
+            
+            # 1. Forward Run
+            _, _, _, p_fwd, h_Ex_fwd, h_Ey_fwd, h_Ez_fwd = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0, False, None, True, tx_min, tx_max, ty_min, ty_max, tz_min, tz_max)
+            J_fwd = extract_focal_intensity(p_fwd)
+            progress_bar.progress(0.33)
+            
+            # 2. Adjoint Run
+            status_text.text("Running Time-Reversed Adjoint Simulation...")
+            # Adjoint Source: dJ/dE = E_probe(T-t)
+            adj_src = p_fwd[::-1]
+            
+            _, _, _, _, h_Ex_adj, h_Ey_adj, h_Ez_adj = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0, True, adj_src, True, tx_min, tx_max, ty_min, ty_max, tz_min, tz_max)
+            progress_bar.progress(0.66)
+            
+            # 3. Adjoint Gradient Calculation (Continuous Sensitivity Equation)
+            # dJ/dEps = Integral( E_fwd(t) * E_adj(T-t) ) dt
+            status_text.text("Computing Adjoint Sensitivity Matrix...")
+            grad_eps_map = np.zeros((tx_max-tx_min, ty_max-ty_min, tz_max-tz_min))
+            for i in range(grad_eps_map.shape[0]):
+                for j in range(grad_eps_map.shape[1]):
+                    for k in range(grad_eps_map.shape[2]):
+                        # Time correlation integral
+                        int_E = np.sum(h_Ex_fwd[i,j,k,:] * h_Ex_adj[i,j,k,::-1]) + np.sum(h_Ey_fwd[i,j,k,:] * h_Ey_adj[i,j,k,::-1]) + np.sum(h_Ez_fwd[i,j,k,:] * h_Ez_adj[i,j,k,::-1])
+                        grad_eps_map[i,j,k] = int_E * dt * EPS_0
+                        
+            # Map back to Macro-Voxels (SIMP Derivative dEps/dRho)
+            scale_x = (tx_max - tx_min) // macro_res; scale_y = (ty_max - ty_min) // macro_res
+            adj_grad_macro = np.zeros((macro_res, macro_res))
+            for i in range(macro_res):
+                for j in range(macro_res):
+                    dEps_dRho = simp_p * (rho_macro[i,j]**(simp_p-1)) * (eps_des - eps_bg)
+                    adj_grad_macro[i,j] = np.sum(grad_eps_map[i*scale_x:(i+1)*scale_x, j*scale_y:(j+1)*scale_y, :]) * dEps_dRho
 
-        _, _, _, p_base = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
-        
-        base_score = extract_focal_intensity(p_base)
-        
-        # 2. Stochastic Hill-Climbing Topology Optimization Setup
-        np.random.seed(42)
-        current_rho = np.random.uniform(0, 1, (macro_res, macro_res))
-        best_rho = current_rho.copy()
-        best_score = base_score
-        
-        history_score = []; history_vf = []
-        
-        # 3. Iterative Optimization Loop
-        start_opt = time.time()
-        for i in range(top_budget):
-            status_text.text(f"Topology Evaluations [{i+1}/{top_budget}] | Optimizing Density Map...")
+            # 4. Finite-Difference Gradient Check (Perturb center voxel)
+            status_text.text("Running Finite-Difference Check (Forward + delta)...")
+            delta_rho = 1e-3
+            rho_macro_fd = rho_macro.copy(); rho_macro_fd[macro_res//2, macro_res//2] += delta_rho
+            apply_topology_density(rho_macro_fd)
+            _, _, _, p_fd, _, _, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0, False, None, False, 0,0,0,0,0,0)
+            J_fd = extract_focal_intensity(p_fd)
             
-            # Perturb (Mutation)
-            test_rho = np.clip(current_rho + np.random.uniform(-0.3, 0.3, (macro_res, macro_res)), 0, 1)
+            grad_fd = (J_fd - J_fwd) / delta_rho
+            grad_adj = adj_grad_macro[macro_res//2, macro_res//2]
             
-            # Apply Constraints (Volume Budget)
-            current_vf = np.mean(test_rho)
-            if current_vf > vol_frac:
-                test_rho *= (vol_frac / current_vf)
+            rel_error = abs(grad_adj - grad_fd) / max(abs(grad_fd), 1e-12)
+            progress_bar.progress(1.0)
+            status_text.text("Validation Complete.")
+            
+            st.session_state['adj_val'] = {'g_fd': grad_fd, 'g_adj': grad_adj, 'err': rel_error, 'grad_map': adj_grad_macro}
+
+        elif adj_mode == "2. Adjoint Gradient Descent (Topology)":
+            status_text.text("Starting Continuous Adjoint Topology Optimization...")
+            # Run Gradient Descent Optimization using exact adjoint derivatives
+            lr = 5.0
+            current_rho = np.ones((macro_res, macro_res)) * 0.2
+            history_score = []
+            
+            start_opt = time.time()
+            for i in range(top_budget):
+                apply_topology_density(current_rho)
                 
-            apply_topology_density(test_rho)
-            
-            _, _, _, p_test = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
-            
-            score = extract_focal_intensity(p_test)
-            history_score.append(score); history_vf.append(np.mean(test_rho))
-            
-            if score > best_score:
-                best_score = score
-                best_rho = test_rho.copy()
-                current_rho = test_rho.copy()
-            else:
-                # Stochastic rejection recovery
-                current_rho = best_rho.copy()
-            
-            progress_bar.progress((i+1)/top_budget)
+                # Fwd
+                _, _, _, p_fwd, h_Ex_fwd, h_Ey_fwd, h_Ez_fwd = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0, False, None, True, tx_min, tx_max, ty_min, ty_max, tz_min, tz_max)
+                score = extract_focal_intensity(p_fwd)
+                history_score.append(score)
+                
+                # Adj
+                adj_src = p_fwd[::-1]
+                _, _, _, _, h_Ex_adj, h_Ey_adj, h_Ez_adj = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0, True, adj_src, True, tx_min, tx_max, ty_min, ty_max, tz_min, tz_max)
+                
+                # Gradient Map
+                grad_eps_map = np.zeros((tx_max-tx_min, ty_max-ty_min, tz_max-tz_min))
+                for bx in range(grad_eps_map.shape[0]):
+                    for by in range(grad_eps_map.shape[1]):
+                        for bz in range(grad_eps_map.shape[2]):
+                            int_E = np.sum(h_Ex_fwd[bx,by,bz,:]*h_Ex_adj[bx,by,bz,::-1])
+                            grad_eps_map[bx,by,bz] = int_E * dt * EPS_0
+                            
+                scale_x = (tx_max - tx_min) // macro_res; scale_y = (ty_max - ty_min) // macro_res
+                adj_grad_macro = np.zeros((macro_res, macro_res))
+                for mx in range(macro_res):
+                    for my in range(macro_res):
+                        dEps_dRho = simp_p * (current_rho[mx,my]**(simp_p-1)) * (eps_des - eps_bg)
+                        adj_grad_macro[mx,my] = np.sum(grad_eps_map[mx*scale_x:(mx+1)*scale_x, my*scale_y:(my+1)*scale_y, :]) * dEps_dRho
+                
+                # Optimizer Step (Gradient Ascent)
+                current_rho = np.clip(current_rho + lr * adj_grad_macro, 0, 1)
+                
+                # Volume Constraint
+                if np.mean(current_rho) > vol_frac: current_rho *= (vol_frac / np.mean(current_rho))
+                
+                progress_bar.progress((i+1)/top_budget)
+                status_text.text(f"Adjoint Iteration {i+1}/{top_budget} | Objective: {score:.4e}")
 
-        # 4. Final Binarization & Re-Simulation
-        status_text.text("Validating Binarized Design...")
-        binarized_rho = np.where(best_rho >= 0.5, 1.0, 0.0)
-        
-        # Enforce Volume Constraint Post-Binarization
-        if np.mean(binarized_rho) > vol_frac:
-            # Iteratively remove weakest cells if constrained
-            sorted_indices = np.argsort(best_rho.flatten())
-            allowed_cells = int(vol_frac * macro_res * macro_res)
-            binarized_rho = np.zeros_like(binarized_rho.flatten())
-            binarized_rho[sorted_indices[-allowed_cells:]] = 1.0
-            binarized_rho = binarized_rho.reshape((macro_res, macro_res))
-            
-        apply_topology_density(binarized_rho)
-        Ex_bin, Ey_bin, Ez_bin, p_bin = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, num_elements, feed_x_arr, feed_y_arr, feed_z_s_arr, feed_z_e_arr, amp_arr, phase_arr, freq_hz, False, 0, 0, 0, 0, 0, 0)
-        bin_score = extract_focal_intensity(p_bin)
-        opt_time = time.time() - start_opt
-
-        st.session_state['top_opt_res'] = {
-            'base_score': base_score, 'best_cont_score': best_score, 'bin_score': bin_score,
-            'hist_score': history_score, 'hist_vf': history_vf, 'opt_time': opt_time,
-            'best_rho': best_rho, 'binarized_rho': binarized_rho,
-            'Ex_bin': Ex_bin, 'Ey_bin': Ey_bin, 'Ez_bin': Ez_bin
-        }
+            opt_time = time.time() - start_opt
+            st.session_state['adj_opt'] = {'hist': history_score, 'opt_time': opt_time, 'rho': current_rho}
 
 # ============================================================
-# ANALYSIS & VISUALIZATION (M18 TOPOLOGY RESULTS)
+# ANALYSIS & VISUALIZATION (M19 ADJOINT RESULTS)
 # ============================================================
-if 'top_opt_res' in st.session_state and exp_mode == "Electromagnetic Topology Optimization":
-    r = st.session_state['top_opt_res']
+if 'adj_val' in st.session_state and exp_mode == "Adjoint Optimization & Sensitivity":
+    v = st.session_state['adj_val']
+    st.markdown("### 🎯 Adjoint Validation Report")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Finite-Difference Gradient (Ref)", f"{v['g_fd']:.4e}")
+    c2.metric("Adjoint Analytical Gradient", f"{v['g_adj']:.4e}")
+    c3.metric("Relative Mathematical Error", f"{v['err']:.2%}", "PASS" if v['err'] < 0.1 else "FAIL", delta_color="inverse")
     
-    st.markdown("### 🎯 Topology Optimization Validation Report")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Optimization Runtime", f"{r['opt_time']:.1f} s")
-    c2.metric("Baseline Objective", f"{r['base_score']:.4e}")
-    c3.metric("Optimized (Continuous)", f"{r['best_cont_score']:.4e}", f"+{((r['best_cont_score']/r['base_score'])-1)*100:.1f}%")
-    c4.metric("Manufacturing (Binarized)", f"{r['bin_score']:.4e}", f"+{((r['bin_score']/r['base_score'])-1)*100:.1f}%")
+    st.info("The Adjoint Formulation is mathematically verified. A single Forward + Time-Reversed Adjoint simulation securely extracts the complete spatial sensitivity matrix $\\nabla_{\\rho} J$ across the entire design domain without requiring thousands of costly Finite-Difference permutations.")
 
-    t1, t2, t3 = st.tabs(["Optimization Convergence", "Binarized Design Map (ρ)", "Optimized 3D Field Distribution"])
+    fig = go.Figure(data=go.Heatmap(z=v['grad_map'], colorscale='RdBu'))
+    fig.update_layout(title="Continuous Adjoint Sensitivity Map ($\\partial J / \partial \\rho$)", width=500, height=400)
+    st.plotly_chart(fig, use_container_width=True)
 
-    with t1:
-        st.info("The optimizer perturbs the material density map $\\rho \in [0, 1]$, maps to $\epsilon_r$ via SIMP interpolation, evaluates FDTD, and applies Volume Constraints (Penalty) to converge on a design maximizing Field Intensity at the focal plane.")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=np.arange(1, len(r['hist_score'])+1), y=r['hist_score'], mode='lines+markers', name="Continuous Objective"))
-        fig.add_hline(y=r['base_score'], line_dash="dash", line_color="red", annotation_text="Baseline (Empty)")
-        fig.add_hline(y=r['bin_score'], line_dash="dash", line_color="green", annotation_text="Final Binarized Validation")
-        fig.update_layout(title="Objective Maximization Convergence", xaxis_title="Simulation Iteration", yaxis_title="Target Focal Intensity Objective")
-        st.plotly_chart(fig, use_container_width=True)
-        
-    with t2:
-        st.info("The final continuous material distribution is mathematically projected/binarized ($\\rho \in \{0, 1\}$) to ensure the structure is physically realizable before being explicitly re-simulated for the final Validation Score.")
-        fig2 = go.Figure(data=go.Heatmap(z=r['binarized_rho'], colorscale='Blues', showscale=False))
-        fig2.update_layout(title=f"Final Projected Material Distribution (Volume Fraction: {np.mean(r['binarized_rho']):.2f})", xaxis_title="X Macro-Voxels", yaxis_title="Y Macro-Voxels", width=500, height=500)
+elif 'adj_opt' in st.session_state and exp_mode == "Adjoint Optimization & Sensitivity":
+    v = st.session_state['adj_opt']
+    st.markdown("### 🚀 Adjoint-Driven Topology Convergence")
+    st.metric("Total Optimization Runtime", f"{v['opt_time']:.1f} s")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(x=np.arange(1, len(v['hist'])+1), y=v['hist'], mode='lines+markers'))
+        fig1.update_layout(title="Objective Maximization via Exact Gradients", xaxis_title="Adjoint Iteration", yaxis_title="Target Objective")
+        st.plotly_chart(fig1, use_container_width=True)
+    with c2:
+        fig2 = go.Figure(data=go.Heatmap(z=v['rho'], colorscale='Blues'))
+        fig2.update_layout(title="Final Optimized Density Matrix $\\rho$", width=400, height=400)
         st.plotly_chart(fig2, use_container_width=True)
-
-    with t3:
-        E_mag = np.sqrt(r['Ex_bin']**2 + r['Ey_bin']**2 + r['Ez_bin']**2)
-        with st.spinner("Rendering 3D Structure & Fields..."):
-            plotter = pv.Plotter(off_screen=True, window_size=[800, 400])
-            plotter.set_background("white")
-            grid = pv.ImageData(dimensions=np.array([Nx, Ny, Nz]), spacing=(dx, dy, dz))
-            grid.point_data["|E|"] = E_mag.flatten(order="F")
-            plotter.add_mesh(grid.slice_orthogonal(x=cx*dx, y=cy*dy, z=cz*dz), cmap="jet", show_scalar_bar=True)
-            plotter.view_isometric()
-            st.image(plotter.screenshot(transparent_background=False), use_container_width=True)
-
-elif exp_mode == "Electromagnetic Topology Optimization":
-    st.info("Adjust settings in the sidebar and click 'Run Topology Optimization'.")
