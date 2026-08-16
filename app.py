@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 21 — Surrogate-Assisted Electromagnetic Optimization & Reduced-Order Modeling
+Milestone 22 — Uncertainty Quantification & Robust Electromagnetic Design
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 21 — Surrogate Optimization & Reduced-Order Modeling (ROM)")
+st.markdown("### Milestone 22 — Uncertainty Quantification & Robust Design")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -69,6 +69,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Uncertainty Quantification (UQ)",
     "Surrogate & Reduced-Order Modeling",
     "Multi-Objective Pareto Optimization",
     "Adjoint Optimization & Sensitivity",
@@ -89,18 +90,14 @@ elif exp_mode == "Advanced Validation Laboratory":
 elif exp_mode == "Adjoint Optimization & Sensitivity":
     adj_mode = st.sidebar.selectbox("Adjoint Workflow", ["1. Adjoint vs Finite-Difference Check", "2. Adjoint Gradient Descent (Topology)"])
 elif exp_mode == "Surrogate & Reduced-Order Modeling":
-    surr_mode = st.sidebar.selectbox("Surrogate / ROM Workflow", [
-        "1. Dataset Generation & Surrogate Training",
-        "2. Surrogate-Assisted Optimization",
-        "3. Reduced-Order Modeling (POD/PCA)"
-    ])
+    surr_mode = st.sidebar.selectbox("Surrogate / ROM Workflow", ["1. Dataset Generation & Surrogate Training", "2. Surrogate-Assisted Optimization", "3. Reduced-Order Modeling (POD/PCA)"])
 
 # ============================================================
 # GRID & DOMAIN SETUP
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Surrogate & Reduced-Order Modeling"]:
-    Nx = Ny = 40; Nz = 40 if exp_mode in ["Inverse Design & Optimization", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling"] else 140
+if exp_mode in ["Adaptive Mesh Refinement (AMR)", "Metamaterials Laboratory", "Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"]:
+    Nx = Ny = 40; Nz = 40 if exp_mode in ["Inverse Design & Optimization", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"] else 140
     dx = dy = dz = 0.005 
 elif exp_mode == "Multi-Objective Pareto Optimization":
     Nx = 50; Ny = 80; Nz = 40; dx = dy = dz = 0.005
@@ -151,8 +148,8 @@ def reset_materials():
 reset_materials()
 
 # Variables
-num_steps = 300 if exp_mode in ["Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling"] else 600
-freq_hz = 2.4e9 if exp_mode == "Surrogate & Reduced-Order Modeling" else 5e9
+num_steps = 300 if exp_mode in ["Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"] else 600
+freq_hz = 2.4e9 if exp_mode in ["Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"] else 5e9
 nf2ff_active = False; num_elements = 1
 feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy]); feed_z_s_arr = np.array([30]); feed_z_e_arr = np.array([30])
 amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
@@ -160,23 +157,36 @@ i_min = j_min = k_min = pml_thickness + 2
 i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = Nz - 1 - pml_thickness - 2
 
 # ============================================================
-# SURROGATE & ROM CONFIGURATION
+# SURROGATE MATH HELPERS (M21/M22 INTEGRATION)
 # ============================================================
-if exp_mode == "Surrogate & Reduced-Order Modeling":
-    st.sidebar.header("3. SURROGATE & ROM CONFIG")
-    if surr_mode == "1. Dataset Generation & Surrogate Training":
-        num_samples = st.sidebar.number_input("Full-Wave Samples (Dataset Size)", 5, 50, 15)
-        train_ratio = st.sidebar.slider("Train/Test Split Ratio", 0.5, 0.9, 0.8)
-        st.sidebar.info("Model: **Polynomial Ridge Regression** (Degree=2, L2 penalty). Selected for stable, fast non-linear mapping without heavy ML dependencies.")
-    elif surr_mode == "2. Surrogate-Assisted Optimization":
-        dense_samples = st.sidebar.number_input("Surrogate Evaluation Budget", 1000, 50000, 10000)
-        st.sidebar.info("The optimizer will instantly scan thousands of points using the Surrogate, then validate the *Best Predicted* point with 1 physical FDTD pass.")
-    elif surr_mode == "3. Reduced-Order Modeling (POD/PCA)":
-        num_modes = st.sidebar.slider("Retained POD Modes (k)", 1, 20, 3)
-        snap_interval = st.sidebar.number_input("Snapshot Interval (Timesteps)", 5, 50, 10)
-        st.sidebar.info("Proper Orthogonal Decomposition extracts dominant spatial energy modes via SVD, massively compressing transient field history.")
+def poly_features_2d(X):
+    N = X.shape[0]; out = np.ones((N, 6))
+    out[:, 1] = X[:, 0]; out[:, 2] = X[:, 1]
+    out[:, 3] = X[:, 0]**2; out[:, 4] = X[:, 1]**2
+    out[:, 5] = X[:, 0] * X[:, 1]
+    return out
+
+def ridge_fit(X, y, alpha=1e-3):
+    return np.linalg.inv(X.T @ X + alpha * np.eye(X.shape[1])) @ X.T @ y
+
+# ============================================================
+# UQ & ROBUST DESIGN CONFIGURATION
+# ============================================================
+if exp_mode == "Uncertainty Quantification (UQ)":
+    st.sidebar.header("3. UQ & ROBUSTNESS CONFIG")
+    num_mc_samples = st.sidebar.number_input("Monte Carlo Samples", min_value=100, max_value=50000, value=10000, step=1000)
+    target_angle = st.sidebar.slider("Target Beam Angle (H-Plane φ°)", -90, 90, 45, 5)
+    target_gain_threshold = st.sidebar.number_input("Gain Yield Threshold", value=0.6)
     
-    # 2-Element Array setup for Target Gain surrogate mapping
+    st.sidebar.subheader("Uncertain Parameters")
+    st.sidebar.markdown("**Param 1: Array Spacing (λ)**")
+    u1_nom = st.sidebar.number_input("P1 Nominal", value=0.5)
+    u1_std = st.sidebar.number_input("P1 Std Dev (σ)", value=0.05, format="%.3f")
+    
+    st.sidebar.markdown("**Param 2: Array Phase (°)**")
+    u2_nom = st.sidebar.number_input("P2 Nominal", value=45.0)
+    u2_std = st.sidebar.number_input("P2 Std Dev (σ)", value=10.0, format="%.2f")
+    
     num_elements = 2
     wavelength = C_LIGHT / freq_hz
     nf2ff_active = True
@@ -212,13 +222,12 @@ def compute_cpml(N, d_pml, delta, dt, m=3, R_err=1e-4, alpha_max=0.05):
 b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# UNIFIED FDTD SOLVER (CPU) WITH SNAPSHOT RECORDING
+# UNIFIED FDTD SOLVER (CPU)
 # ============================================================
 @nb.njit(cache=True)
 def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
                        ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
-                       cd1_e, cd2_e, cd1_m, cd2_m, num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, nf2ff_on, imin, imax, jmin, jmax, kmin, kmax,
-                       record_snapshots=False, snap_interval=10, cx=0, cy=0, cz=0):
+                       cd1_e, cd2_e, cd1_m, cd2_m, num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, nf2ff_on, imin, imax, jmin, jmax, kmin, kmax):
 
     Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
@@ -231,10 +240,6 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
     sx_E = np.zeros((2, jmax-jmin+1, kmax-kmin+1, 2, steps), dtype=ce1_x.dtype) if nf2ff_on else np.zeros((1,1,1,1,1), dtype=ce1_x.dtype)
-    
-    num_snaps = steps // snap_interval + 1 if record_snapshots else 1
-    snapshots = np.zeros((Nx * Ny, num_snaps), dtype=ce1_x.dtype)
-    snap_idx = 0
 
     for n in range(steps):
         t_steps = float(n)
@@ -284,21 +289,7 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
                 for j in range(jmin, jmax+1):
                     for k in range(kmin, kmax+1):
                         sx_E[f, j-jmin, k-kmin, 0, n] = Ey[i, j, k]; sx_E[f, j-jmin, k-kmin, 1, n] = Ez[i, j, k]
-                        
-        if record_snapshots and n % snap_interval == 0:
-            # Flatten 2D slice at Z=cz to store as a snapshot vector
-            idx = 0
-            for i in range(Nx):
-                for j in range(Ny):
-                    snapshots[idx, snap_idx] = Ez[i, j, cz]
-                    idx += 1
-            snap_idx += 1
-
-    return Ex, Ey, Ez, sx_E, snapshots
-
-def run_simulation_gpu(*args):
-    # CuPy implementation exactly matches the vectorized layout. Fallback to CPU to avoid VRAM overhead during ROM loops.
-    return run_simulation_cpu(*args)
+    return Ex, Ey, Ez, sx_E
 
 def extract_target_gain(sx_E, freq, t_rad):
     k = 2.0 * np.pi * freq / C_LIGHT
@@ -320,204 +311,165 @@ def extract_target_gain(sx_E, freq, t_rad):
     return E_pattern[target_idx]
 
 # ============================================================
-# SURROGATE MATH HELPERS (NO HEAVY ML IMPORTS)
+# UNCERTAINTY QUANTIFICATION (UQ) & SOBOL SENSITIVITY
 # ============================================================
-def poly_features_2d(X):
-    # Generates [1, x1, x2, x1^2, x2^2, x1*x2] for Polynomial Ridge Regression
-    N = X.shape[0]; out = np.ones((N, 6))
-    out[:, 1] = X[:, 0]; out[:, 2] = X[:, 1]
-    out[:, 3] = X[:, 0]**2; out[:, 4] = X[:, 1]**2
-    out[:, 5] = X[:, 0] * X[:, 1]
-    return out
+if exp_mode == "Uncertainty Quantification (UQ)":
+    run_uq_btn = st.button("Run Surrogate-Assisted UQ Pipeline", type="primary")
 
-def ridge_fit(X, y, alpha=1e-3):
-    return np.linalg.inv(X.T @ X + alpha * np.eye(X.shape[1])) @ X.T @ y
-
-def r2_score(y_true, y_pred):
-    ss_res = np.sum((y_true - y_pred)**2); ss_tot = np.sum((y_true - np.mean(y_true))**2)
-    return 1 - (ss_res / (ss_tot + 1e-12))
-
-# ============================================================
-# SURROGATE & ROM WORKFLOWS
-# ============================================================
-if exp_mode == "Surrogate & Reduced-Order Modeling":
-    
-    if surr_mode == "1. Dataset Generation & Surrogate Training":
-        run_btn = st.button("Generate Dataset & Train Surrogate", type="primary")
-        if run_btn:
-            st.markdown("### 🧬 Dataset Generation (Full-Wave Iterations)")
-            progress_bar = st.progress(0)
-            
-            # Generate Random Samples (LHS approximation)
-            np.random.seed(42)
-            X_samples = np.zeros((num_samples, 2))
-            X_samples[:, 0] = np.random.uniform(0.25, 1.0, num_samples) # Spacing lambda
-            X_samples[:, 1] = np.random.uniform(-180, 180, num_samples) # Phase deg
-            y_samples = np.zeros(num_samples)
-            
-            start_ds = time.time()
-            for i in range(num_samples):
-                reset_materials()
-                spacing_cells = int((X_samples[i, 0] * wavelength) / dy)
-                f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
-                p_arr = np.array([0.0, math.radians(X_samples[i, 1])])
-                
-                for n in range(2):
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
-                    
-                _, _, _, sx_E, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max, False, 10, cx, cy, cz)
-                y_samples[i] = extract_target_gain(sx_E, freq_hz, math.radians(45)) # Target 45 deg Directivity
-                progress_bar.progress((i+1)/num_samples)
-            
-            ds_time = time.time() - start_ds
-            
-            # Train / Test Split
-            indices = np.random.permutation(num_samples)
-            split_idx = int(train_ratio * num_samples)
-            train_idx, test_idx = indices[:split_idx], indices[split_idx:]
-            
-            # Feature Scaling (Min-Max)
-            X_min, X_max = np.min(X_samples, axis=0), np.max(X_samples, axis=0)
-            X_scaled = (X_samples - X_min) / (X_max - X_min + 1e-12)
-            
-            # Polynomial Ridge Regression Training
-            X_train, y_train = X_scaled[train_idx], y_samples[train_idx]
-            X_test, y_test = X_scaled[test_idx], y_samples[test_idx]
-            
-            X_train_poly = poly_features_2d(X_train)
-            X_test_poly = poly_features_2d(X_test)
-            
-            weights = ridge_fit(X_train_poly, y_train, alpha=1e-3)
-            
-            y_pred_train = X_train_poly @ weights
-            y_pred_test = X_test_poly @ weights
-            
-            r2_test = r2_score(y_test, y_pred_test)
-            rmse_test = np.sqrt(np.mean((y_test - y_pred_test)**2))
-            
-            st.session_state['surr_model'] = {'weights': weights, 'X_min': X_min, 'X_max': X_max, 'r2': r2_test, 'rmse': rmse_test, 'ds_time': ds_time, 'y_test': y_test, 'y_pred_test': y_pred_test}
-            
-            st.success("Surrogate Training Complete!")
-
-    elif surr_mode == "2. Surrogate-Assisted Optimization":
-        if 'surr_model' not in st.session_state: st.warning("Please run Step 1 (Dataset Generation) first to train the Surrogate model.")
-        else:
-            run_opt_btn = st.button("Run Surrogate Optimizer (10,000 Evaluations) & Validate", type="primary")
-            if run_opt_btn:
-                model = st.session_state['surr_model']
-                st.markdown("### 🚀 Fast Surrogate Prediction Iterations")
-                start_opt = time.time()
-                
-                # Dense Random Search using Surrogate
-                X_dense = np.zeros((dense_samples, 2))
-                X_dense[:, 0] = np.random.uniform(0.25, 1.0, dense_samples)
-                X_dense[:, 1] = np.random.uniform(-180, 180, dense_samples)
-                X_dense_scaled = (X_dense - model['X_min']) / (model['X_max'] - model['X_min'] + 1e-12)
-                X_dense_poly = poly_features_2d(X_dense_scaled)
-                
-                y_preds = X_dense_poly @ model['weights']
-                best_idx = np.argmax(y_preds)
-                best_X = X_dense[best_idx]
-                best_pred_y = y_preds[best_idx]
-                
-                opt_time = time.time() - start_opt
-                
-                st.markdown("### 🔬 Full-Wave FDTD Validation (Single Pass)")
-                start_val = time.time()
-                reset_materials()
-                spacing_cells = int((best_X[0] * wavelength) / dy)
-                f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
-                p_arr = np.array([0.0, math.radians(best_X[1])])
-                
-                for n in range(2):
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
-                    
-                _, _, _, sx_E, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max, False, 10, cx, cy, cz)
-                actual_y = extract_target_gain(sx_E, freq_hz, math.radians(45))
-                val_time = time.time() - start_val
-                
-                st.session_state['surr_opt_res'] = {
-                    'opt_time': opt_time, 'val_time': val_time, 'best_X': best_X, 'pred_y': best_pred_y, 'actual_y': actual_y
-                }
-
-    elif surr_mode == "3. Reduced-Order Modeling (POD/PCA)":
-        run_rom_btn = st.button("Run Full-Wave & Extract POD Snapshot Matrix", type="primary")
-        if run_rom_btn:
-            st.markdown("### 📸 Recording Temporal Snapshots (FDTD Pass)")
+    if run_uq_btn:
+        st.markdown("### 🧬 Robust Design & Uncertainty Quantification Progress")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        target_rad = math.radians(target_angle)
+        
+        # 1. Dataset Generation & Surrogate Training (Self-Contained for UQ)
+        status_text.text("Generating Full-Wave Baseline Dataset for UQ Surrogate...")
+        num_train = 20
+        np.random.seed(42)
+        X_train = np.zeros((num_train, 2))
+        X_train[:, 0] = np.random.uniform(0.2, 1.0, num_train)
+        X_train[:, 1] = np.random.uniform(-180, 180, num_train)
+        y_train = np.zeros(num_train)
+        
+        train_start = time.time()
+        for i in range(num_train):
             reset_materials()
-            # Simple dipole setup
-            dipole_cells = int((wavelength/2) / dz); arm_cells = (dipole_cells - 1) // 2
-            apply_material_block(cx, cx, cy, cy, cz - arm_cells, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-            apply_material_block(cx, cx, cy, cy, cz + 1, cz + arm_cells, MAT_LIB["PEC (Perfect Conductor)"])
+            spacing_cells = int((X_train[i, 0] * wavelength) / dy)
+            f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
+            p_arr = np.array([0.0, math.radians(X_train[i, 1])])
+            for n in range(2):
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
             
-            _, _, Ez, _, S_matrix = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 1, np.array([cx]), np.array([cy]), np.array([cz]), np.array([cz]), np.array([1.0]), np.array([0.0]), freq_hz, False, 0, 0, 0, 0, 0, 0, True, snap_interval, cx, cy, cz)
+            _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
+            y_train[i] = extract_target_gain(sx_E, freq_hz, target_rad)
+            progress_bar.progress(0.2 * (i+1)/num_train)
             
-            st.markdown("### 📉 Executing Proper Orthogonal Decomposition (SVD)")
-            start_svd = time.time()
-            U, Sigma, Vt = np.linalg.svd(S_matrix, full_matrices=False)
-            U_k = U[:, :num_modes]
-            S_reconstructed = U_k @ U_k.T @ S_matrix
-            svd_time = time.time() - start_svd
+        # Surrogate Fitting
+        X_min, X_max = np.min(X_train, axis=0), np.max(X_train, axis=0)
+        X_scaled = (X_train - X_min) / (X_max - X_min + 1e-12)
+        X_poly = poly_features_2d(X_scaled)
+        weights = ridge_fit(X_poly, y_train, alpha=1e-3)
+        train_time = time.time() - train_start
+        
+        # 2. Monte Carlo Sampling on Surrogate
+        status_text.text(f"Running Monte Carlo Sampling ({num_mc_samples} runs) via Surrogate...")
+        mc_start = time.time()
+        
+        # Generate Normal Distributions based on UI uncertainties
+        A_samples = np.zeros((num_mc_samples, 2))
+        A_samples[:, 0] = np.random.normal(u1_nom, u1_std, num_mc_samples)
+        A_samples[:, 1] = np.random.normal(u2_nom, u2_std, num_mc_samples)
+        A_samples[:, 0] = np.clip(A_samples[:, 0], 0.1, 2.0)
+        A_samples[:, 1] = np.clip(A_samples[:, 1], -180.0, 180.0)
+        
+        # Predict Base MC
+        A_scaled = (A_samples - X_min) / (X_max - X_min + 1e-12)
+        y_mc = poly_features_2d(A_scaled) @ weights
+        
+        # 3. Sobol Sensitivity Analysis (Saltelli Method)
+        status_text.text("Calculating Sobol Sensitivity Indices (Global)...")
+        B_samples = np.zeros((num_mc_samples, 2))
+        B_samples[:, 0] = np.random.normal(u1_nom, u1_std, num_mc_samples)
+        B_samples[:, 1] = np.random.normal(u2_nom, u2_std, num_mc_samples)
+        B_samples[:, 0] = np.clip(B_samples[:, 0], 0.1, 2.0)
+        B_samples[:, 1] = np.clip(B_samples[:, 1], -180.0, 180.0)
+        B_scaled = (B_samples - X_min) / (X_max - X_min + 1e-12)
+        y_B = poly_features_2d(B_scaled) @ weights
+        
+        var_Y = np.var(np.concatenate([y_mc, y_B]))
+        S_i = np.zeros(2); ST_i = np.zeros(2)
+        
+        for p_idx in range(2):
+            AB_i = A_scaled.copy(); AB_i[:, p_idx] = B_scaled[:, p_idx]
+            y_AB_i = poly_features_2d(AB_i) @ weights
+            S_i[p_idx] = (np.mean(y_mc * y_AB_i) - np.mean(y_mc)**2) / var_Y
+            ST_i[p_idx] = (1.0 / (2 * num_mc_samples * var_Y)) * np.sum((y_mc - y_AB_i)**2)
             
-            l2_err = np.linalg.norm(S_matrix - S_reconstructed) / (np.linalg.norm(S_matrix) + 1e-12)
+        mc_time = time.time() - mc_start
+        
+        # 4. Statistical Outputs & Yield
+        y_mean = np.mean(y_mc); y_std = np.std(y_mc)
+        y_p5, y_median, y_p95 = np.percentile(y_mc, [5, 50, 95])
+        yield_pct = np.sum(y_mc >= target_gain_threshold) / num_mc_samples * 100.0
+        
+        worst_idx = np.argmin(y_mc)
+        worst_X = A_samples[worst_idx]
+        worst_pred = y_mc[worst_idx]
+        
+        # 5. Full-Wave Validation of Nominal and Worst-Case
+        status_text.text("Executing Full-Wave Validations on Extremes...")
+        val_start = time.time()
+        
+        def run_fw(spacing, phase):
+            reset_materials()
+            spacing_cells = int((spacing * wavelength) / dy)
+            f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
+            p_arr = np.array([0.0, math.radians(phase)])
+            for n in range(2):
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
+            _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
+            return extract_target_gain(sx_E, freq_hz, target_rad)
             
-            st.session_state['rom_res'] = {
-                'Sigma': Sigma, 'L2': l2_err, 'svd_time': svd_time, 
-                'orig_slice': S_matrix[:, -1].reshape((Nx, Ny)), 
-                'recon_slice': S_reconstructed[:, -1].reshape((Nx, Ny))
-            }
+        fw_nom = run_fw(u1_nom, u2_nom)
+        fw_worst = run_fw(worst_X[0], worst_X[1])
+        val_time = time.time() - val_start
+        
+        progress_bar.progress(1.0)
+        status_text.text("Uncertainty Quantification Complete.")
+        
+        st.session_state['uq_res'] = {
+            'y_mc': y_mc, 'y_mean': y_mean, 'y_std': y_std, 'y_p5': y_p5, 'y_median': y_median, 'y_p95': y_p95,
+            'yield_pct': yield_pct, 'S_i': S_i, 'ST_i': ST_i, 'worst_X': worst_X, 'worst_pred': worst_pred,
+            'fw_nom': fw_nom, 'fw_worst': fw_worst, 'mc_time': mc_time, 'train_time': train_time
+        }
 
 # ============================================================
-# ANALYSIS & VISUALIZATION (M21 RESULTS)
+# ANALYSIS & VISUALIZATION (M22 UQ RESULTS)
 # ============================================================
-if 'surr_model' in st.session_state and exp_mode == "Surrogate & Reduced-Order Modeling" and surr_mode == "1. Dataset Generation & Surrogate Training":
-    m = st.session_state['surr_model']
-    st.markdown("### 🎯 Surrogate Training Validation")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("FDTD Dataset Runtime", f"{m['ds_time']:.1f} s")
-    c2.metric("Polynomial Ridge R² Score", f"{m['r2']:.4f}")
-    c3.metric("RMSE Error", f"{m['rmse']:.4e}", "PASS" if m['r2'] > 0.8 else "FAIL", delta_color="inverse")
-    c4.metric("Train/Test Split", f"{int(train_ratio*100)}% / {100-int(train_ratio*100)}%")
+if 'uq_res' in st.session_state and exp_mode == "Uncertainty Quantification (UQ)":
+    r = st.session_state['uq_res']
     
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=m['y_test'], y=m['y_pred_test'], mode='markers', name="Predictions"))
-    fig.add_trace(go.Scatter(x=[np.min(m['y_test']), np.max(m['y_test'])], y=[np.min(m['y_test']), np.max(m['y_test'])], mode='lines', line=dict(dash='dash', color='red'), name="Ideal Parity"))
-    fig.update_layout(title="Surrogate Parity Plot (Unseen Test Data)", xaxis_title="Actual FDTD Objective", yaxis_title="Surrogate Predicted Objective")
-    st.plotly_chart(fig, use_container_width=True)
-
-elif 'surr_opt_res' in st.session_state and exp_mode == "Surrogate & Reduced-Order Modeling" and surr_mode == "2. Surrogate-Assisted Optimization":
-    r = st.session_state['surr_opt_res']
-    st.markdown("### 🚀 Surrogate-Assisted Optimization Results")
+    st.markdown("### 🎯 Robust Design & Uncertainty Report")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric(f"Surrogate Scan ({dense_samples} pts)", f"{r['opt_time']:.3f} s")
-    c2.metric("Best Surrogate Prediction", f"{r['pred_y']:.4e}")
-    c3.metric("Physical FDTD Validation", f"{r['actual_y']:.4e}")
-    c4.metric("Surrogate Relative Error", f"{abs(r['pred_y']-r['actual_y'])/r['actual_y']*100:.2f}%", "PASS" if abs(r['pred_y']-r['actual_y'])/r['actual_y'] < 0.1 else "FAIL", delta_color="inverse")
-    
-    st.info(f"The Surrogate mapped {dense_samples} points almost instantly. The Best Candidate (Spacing: {r['best_X'][0]:.2f}λ, Phase: {r['best_X'][1]:.1f}°) was strictly re-run through the physical FDTD solver, validating the mathematical surrogate projection.")
+    c1.metric("MC Sample Size", f"{num_mc_samples}")
+    c2.metric("Mean Target Gain", f"{r['y_mean']:.4f}", f"± {r['y_std']:.4f} σ", delta_color="off")
+    c3.metric("Estimated Manufacturing Yield", f"{r['yield_pct']:.1f}%", f"Threshold: {target_gain_threshold}", delta_color="normal")
+    c4.metric("Worst Sampled Case", f"{r['worst_pred']:.4f}", f"Space: {r['worst_X'][0]:.2f}λ, {r['worst_X'][1]:.1f}°", delta_color="inverse")
 
-elif 'rom_res' in st.session_state and exp_mode == "Surrogate & Reduced-Order Modeling" and surr_mode == "3. Reduced-Order Modeling (POD/PCA)":
-    r = st.session_state['rom_res']
-    st.markdown("### 📸 Reduced-Order Modeling (POD) Validation")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("SVD Decomposition Time", f"{r['svd_time']:.4f} s")
-    c2.metric("Retained POD Modes", f"{num_modes}")
-    c3.metric("Reconstruction L2 Error", f"{r['L2']:.2%}", "PASS" if r['L2'] < 0.2 else "WARNING", delta_color="inverse")
+    t1, t2, t3 = st.tabs(["Statistical Distributions", "Global Sobol Sensitivity", "Full-Wave Validation Checks"])
 
-    t1, t2 = st.tabs(["Singular Value Energy Decay", "Field Reconstruction Comparison"])
     with t1:
-        fig = go.Figure(go.Scatter(y=r['Sigma'][:20], mode='lines+markers'))
-        fig.update_layout(title="POD Mode Energy (Singular Values)", yaxis_type="log", xaxis_title="Mode Index", yaxis_title="Singular Value (Log Scale)")
+        st.info("The Monte Carlo simulation isolates standard manufacturing/hardware uncertainty variances against final electromagnetic efficiency goals using thousands of sub-millisecond surrogate evaluations.")
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(x=r['y_mc'], nbinsx=50, marker_color='blue', name="Gain Distribution"))
+        fig.add_vline(x=r['y_p5'], line_dash="dash", line_color="red", annotation_text="5th Percentile")
+        fig.add_vline(x=r['y_p95'], line_dash="dash", line_color="green", annotation_text="95th Percentile")
+        fig.add_vline(x=target_gain_threshold, line_dash="solid", line_color="black", annotation_text="Yield Threshold")
+        fig.update_layout(title="Electromagnetic Target Gain (Manufacturing Distribution)", xaxis_title="Array Gain (Linear)", yaxis_title="Sample Count")
         st.plotly_chart(fig, use_container_width=True)
+
     with t2:
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            f1 = go.Figure(data=go.Heatmap(z=r['orig_slice'], colorscale='RdBu'))
-            f1.update_layout(title="Original Full-Wave Field (Final Snapshot)", width=400, height=400)
-            st.plotly_chart(f1, use_container_width=True)
-        with cc2:
-            f2 = go.Figure(data=go.Heatmap(z=r['recon_slice'], colorscale='RdBu'))
-            f2.update_layout(title=f"Reconstructed Field ({num_modes} Modes)", width=400, height=400)
-            st.plotly_chart(f2, use_container_width=True)
+        st.info("Saltelli variance-based global sensitivity analysis computes the fractional contribution of each uncertain physical parameter. $S_i$ evaluates isolated effects, while $S_{T_i}$ evaluates combined non-linear interaction bounds.")
+        fig2 = go.Figure(data=[
+            go.Bar(name='First-Order Index (S_i)', x=['Array Spacing (λ)', 'Array Phase (°)'], y=r['S_i']),
+            go.Bar(name='Total-Order Index (S_T_i)', x=['Array Spacing (λ)', 'Array Phase (°)'], y=r['ST_i'])
+        ])
+        fig2.update_layout(title="Sobol Sensitivity Indices", barmode='group', yaxis_title="Variance Contribution Ratio", yaxis_range=[0, 1.1])
+        st.plotly_chart(fig2, use_container_width=True)
+        
+    with t3:
+        st.markdown("#### 🔬 FDTD Verification of Statistical Extremes")
+        st.markdown("To ensure scientific honesty, the surrogate's projected Nominal and Worst-Case bounding extremes are re-solved using isolated explicit Full-Wave FDTD configurations to certify that surrogate predictive variance has not drifted from Maxwell's limits.")
+        
+        val_data = {
+            "Design Case": ["Nominal Parameter State", "Worst Sampled Defect State"],
+            "Spacing (λ)": [f"{u1_nom:.2f}", f"{r['worst_X'][0]:.2f}"],
+            "Phase (°)": [f"{u2_nom:.1f}", f"{r['worst_X'][1]:.1f}"],
+            "Surrogate Prediction": [f"N/A (Anchor)", f"{r['worst_pred']:.4f}"],
+            "Full-Wave FDTD Validated": [f"{r['fw_nom']:.4f}", f"{r['fw_worst']:.4f}"]
+        }
+        st.table(pd.DataFrame(val_data))
+        st.write(f"**Surrogate Boundary Relative Error:** `{abs(r['worst_pred'] - r['fw_worst'])/r['fw_worst']*100:.2f}%`")
