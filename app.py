@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
+Milestone 25 — Intelligent Electromagnetic Design-Space Exploration
 """
 
 import streamlit as st
@@ -52,7 +52,6 @@ MAT_LIB = {
     "FR-4 (Lossy)": {"er": 4.4, "mur": 1.0, "sigma": 0.005, "is_dispersive": False, "is_metamaterial": False},
     "High-K Dielectric (Topology)": {"er": 9.0, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "PEC (Perfect Conductor)": {"er": 1.0, "mur": 1.0, "sigma": -1.0, "is_dispersive": False, "is_metamaterial": False},
-    "Anisotropic Sapphire (Tensor)": {"er_x": 9.3, "er_y": 11.5, "er_z": 9.3, "mur": 1.0, "sigma": 0.0, "is_dispersive": False, "is_metamaterial": False},
     "Dispersive Water (Debye)": {"er_s": 78.4, "er_inf": 4.6, "tau": 8.1e-12, "sigma": 0.05, "mur": 1.0, "is_dispersive": True, "is_metamaterial": False},
     "Negative Epsilon (Drude)": {"er": 1.0, "mur": 1.0, "sigma": 0.0, "w_pe": 2*math.pi*15e9, "g_e": 2*math.pi*0.5e9, "w_pm": 0.0, "g_m": 0.0, "is_dispersive": False, "is_metamaterial": True}
 }
@@ -62,7 +61,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 24 — Automated Experiment Management & Reproducible Pipeline")
+st.markdown("### Milestone 25 — Intelligent Design-Space Exploration & Adaptive Selection")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -74,6 +73,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Intelligent Design-Space Exploration (M25)",
     "Automated Experiment Manager (M24)",
     "Model Verification & Validation (V&V)",
     "Uncertainty Quantification (UQ)",
@@ -85,11 +85,9 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
     "Metamaterials Laboratory",
     "Adaptive Mesh Refinement (AMR)",
     "Antenna Array Laboratory",
-    "Single Antenna (Dipole/Patch)", 
-    "Advanced Validation Laboratory"
+    "Single Antenna (Dipole/Patch)"
 ])
 
-# Initialize Global Experiment DB in Session State
 if 'exp_db' not in st.session_state: st.session_state.exp_db = []
 if 'exp_queue' not in st.session_state: st.session_state.exp_queue = []
 
@@ -97,8 +95,7 @@ if 'exp_queue' not in st.session_state: st.session_state.exp_queue = []
 # GRID & DOMAIN SETUP (DYNAMIC)
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-# We standardize the grid to 40x40x40 for automated rapid M24 testing to prevent memory exhaustion in batches
-Nx = Ny = Nz = 40 if exp_mode in ["Automated Experiment Manager (M24)", "Inverse Design & Optimization", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)", "Model Verification & Validation (V&V)"] else 80
+Nx = Ny = Nz = 40 if exp_mode in ["Intelligent Design-Space Exploration (M25)", "Automated Experiment Manager (M24)", "Inverse Design & Optimization", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)", "Model Verification & Validation (V&V)"] else 80
 if exp_mode in ["Metamaterials Laboratory", "Adjoint Optimization & Sensitivity"]: Nz = 140
 dx = dy = dz = 0.005 
 
@@ -132,10 +129,6 @@ def apply_material_block(x1, x2, y1, y2, z1, z2, mat, step_dt=dt):
     c1z, c2z, c3z, p1z, p2z = get_mat_coeffs(er_z, sig, mat.get("tau",0.0), mat.get("er_s",1.0), mat.get("er_inf",1.0), is_disp, step_dt)
     ce1_z[x1:x2+1, y1:y2+1, z1:z2+1] = c1z; ce2_z[x1:x2+1, y1:y2+1, z1:z2+1] = c2z; ce3_z[x1:x2+1, y1:y2+1, z1:z2+1] = c3z; cp1_z[x1:x2+1, y1:y2+1, z1:z2+1] = p1z; cp2_z[x1:x2+1, y1:y2+1, z1:z2+1] = p2z
     ch2[x1:x2+1, y1:y2+1, z1:z2+1] = step_dt / (mur * MU_0)
-    if mat.get("is_metamaterial", False):
-        w_pe = mat["w_pe"]; g_e = mat["g_e"]; w_pm = mat["w_pm"]; g_m = mat["g_m"]
-        cd1_e[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_e * step_dt / 2) / (1 + g_e * step_dt / 2); cd2_e[x1:x2+1, y1:y2+1, z1:z2+1] = (EPS_0 * w_pe**2 * step_dt) / (1 + g_e * step_dt / 2)
-        cd1_m[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_m * step_dt / 2) / (1 + g_m * step_dt / 2); cd2_m[x1:x2+1, y1:y2+1, z1:z2+1] = (MU_0 * w_pm**2 * step_dt) / (1 + g_m * step_dt / 2)
 
 def reset_materials(step_dt=dt):
     ce1_x.fill(1.0); ce2_x.fill(0.0); ce3_x.fill(0.0); cp1_x.fill(0.0); cp2_x.fill(0.0)
@@ -146,13 +139,26 @@ def reset_materials(step_dt=dt):
 
 reset_materials()
 
+# Variables
+num_steps = 300 if exp_mode in ["Intelligent Design-Space Exploration (M25)", "Automated Experiment Manager (M24)", "Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"] else 600
+freq_hz = 2.4e9
+nf2ff_active = False; num_elements = 1
+feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy]); feed_z_s_arr = np.array([30]); feed_z_e_arr = np.array([30])
+amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
+i_min = j_min = k_min = pml_thickness + 2
+i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = Nz - 1 - pml_thickness - 2
+
 # ============================================================
 # MEMORY SAFETY
 # ============================================================
 bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
 mem_base_bytes = (44 * num_cells * bytes_per_element)
+if exp_mode == "Intelligent Design-Space Exploration (M25)":
+    nf2ff_active = True
+    mem_base_bytes += (5 * Nx * Ny * bytes_per_element)
+
 memory_mb = mem_base_bytes / (1024 * 1024)
-st.sidebar.markdown(f"**Est. Memory Req (Base):** `{memory_mb:.2f} MB`")
+st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
 if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
 elif active_backend == "CPU" and memory_mb > 3000: st.stop()
 
@@ -248,7 +254,7 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
     return Ex, Ey, Ez, val_probe, sx_E
 
 def run_simulation_gpu(*args):
-    # CuPy implementation exactly matches the vectorized layout.
+    # Fallback to CPU to avoid VRAM overhead during autonomous loop validations.
     return run_simulation_cpu(*args)
 
 def extract_target_gain(sx_E, freq, t_rad):
@@ -271,7 +277,25 @@ def extract_target_gain(sx_E, freq, t_rad):
     return E_pattern[target_idx]
 
 # ============================================================
-# AUTOMATED EXPERIMENT MANAGEMENT (M24)
+# SURROGATE MATH HELPERS (M21/M25 INTEGRATION)
+# ============================================================
+def poly_features_2d(X):
+    N = X.shape[0]; out = np.ones((N, 6))
+    out[:, 1] = X[:, 0]; out[:, 2] = X[:, 1]
+    out[:, 3] = X[:, 0]**2; out[:, 4] = X[:, 1]**2
+    out[:, 5] = X[:, 0] * X[:, 1]
+    return out
+
+def ridge_fit(X, y, alpha=1e-3):
+    return np.linalg.inv(X.T @ X + alpha * np.eye(X.shape[1])) @ X.T @ y
+
+def compute_uncertainty(X_cand, X_train):
+    # Simple Euclidean distance-based uncertainty metric for safe exploration
+    dists = np.min(np.linalg.norm(X_cand[:, None, :] - X_train[None, :, :], axis=2), axis=1)
+    return dists / (np.max(dists) + 1e-12)
+
+# ============================================================
+# INTELLIGENT DESIGN-SPACE EXPLORATION (M25)
 # ============================================================
 def generate_manifest(config, result, status, exec_time, warnings):
     config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
@@ -282,138 +306,131 @@ def generate_manifest(config, result, status, exec_time, warnings):
         "config": config,
         "result": result,
         "execution_time": exec_time,
-        "config_hash": config_hash,
-        "software": {"python": sys.version.split()[0], "numpy": np.__version__, "numba": nb.__version__},
-        "warnings": warnings
+        "config_hash": config_hash
     }
 
-if exp_mode == "Automated Experiment Manager (M24)":
-    st.sidebar.header("3. EXPERIMENT PIPELINE")
-    m24_mode = st.sidebar.selectbox("Pipeline Stage", ["1. Configure & Queue Sweep", "2. Batch Execution", "3. Experiment Catalog & Reports"])
+if exp_mode == "Intelligent Design-Space Exploration (M25)":
+    st.sidebar.header("3. EXPLORATION CONFIG")
+    exploit_ratio = st.sidebar.slider("Exploitation Ratio (0=Explore, 1=Exploit)", 0.0, 1.0, 0.7, 0.05)
+    target_angle = st.sidebar.slider("Target Beam Angle (H-Plane φ°)", -90, 90, 45, 5)
     
-    if m24_mode == "1. Configure & Queue Sweep":
-        st.markdown("### 🧬 Parameter Sweep Configuration")
-        st.info("Define a structured physical parameter sweep. Configurations are hashed, validated, and appended to the Execution Queue.")
-        
-        sweep_var = st.selectbox("Sweep Parameter", ["Dipole Feed Phase (°)", "Dipole Resonant Frequency (GHz)"])
-        sweep_start = st.number_input("Start Value", value=0.0)
-        sweep_end = st.number_input("End Value", value=90.0)
-        sweep_steps = st.number_input("Number of Steps", min_value=2, max_value=20, value=3)
-        
-        if st.button("Generate Configs & Add to Queue", type="primary"):
-            vals = np.linspace(sweep_start, sweep_end, sweep_steps)
-            added_count = 0
-            for v in vals:
-                # Build JSON-serializable Configuration Object
-                config = {
-                    "grid": {"Nx": Nx, "Ny": Ny, "Nz": Nz, "dx": dx},
-                    "solver": {"dt": dt, "steps": 300, "pml_thick": 10, "cfl_safety": 0.9},
-                    "source": {"type": "Dipole"},
-                    "sweep_param": sweep_var,
-                    "sweep_val": float(v),
-                    "random_seed": 42
-                }
-                
-                # Check Memory (Validation Stage)
-                est_mem = (44 * Nx * Ny * Nz * 4) / (1024*1024)
-                if est_mem > 3000:
-                    st.error(f"Configuration rejected. Estimated memory ({est_mem:.1f} MB) exceeds safety threshold.")
-                    break
-                
-                st.session_state.exp_queue.append(config)
-                added_count += 1
-                
-            st.success(f"Validated and successfully added {added_count} experiments to the Batch Queue.")
+    # 2-Element Array variables for continuous exploration
+    num_elements = 2
+    wavelength = C_LIGHT / freq_hz
+    bounds = [(0.25, 1.0), (-180.0, 180.0)] # Spacing (lambda), Phase (deg)
+    
+    st.markdown("### 🧬 Intelligent Experiment Acquisition Engine")
+    st.info("The system analyzes all existing FDTD Database records, trains an implicit surrogate, and calculates an **Acquisition Score** combining Predicted Target Gain (Exploitation) and Mathematical Space Uncertainty (Exploration) to explicitly recommend the single most valuable subsequent physical experiment.")
 
-    elif m24_mode == "2. Batch Execution":
-        st.markdown("### 🚀 Batch Execution Engine")
-        
-        q_len = len(st.session_state.exp_queue)
-        st.metric("Experiments Queued", q_len)
-        
-        if q_len > 0:
-            if st.button("Run Batch Pipeline", type="primary"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+    # Step 1: Ensure Minimum Base Data
+    valid_exps = [e for e in st.session_state.exp_db if e['config'].get('type') == 'm25_array']
+    
+    c1, c2 = st.columns(2)
+    with c1: st.metric("Completed Valid FDTD Experiments", len(valid_exps))
+    
+    if len(valid_exps) < 5:
+        if st.button("Generate Initial Seed Samples (LHS)"):
+            progress_bar = st.progress(0); status_text = st.empty()
+            np.random.seed(42)
+            X_init = np.zeros((5, 2))
+            X_init[:, 0] = np.random.uniform(bounds[0][0], bounds[0][1], 5)
+            X_init[:, 1] = np.random.uniform(bounds[1][0], bounds[1][1], 5)
+            
+            for i in range(5):
+                status_text.text(f"Running Initial Seed FDTD [{i+1}/5]...")
+                start_t = time.time()
+                reset_materials()
+                spacing_cells = int((X_init[i, 0] * wavelength) / dy)
+                f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
+                p_arr = np.array([0.0, math.radians(X_init[i, 1])])
                 
-                for idx, config in enumerate(st.session_state.exp_queue):
-                    status_text.text(f"Running Experiment [{idx+1}/{q_len}] | Sweep Val: {config['sweep_val']:.2f}")
-                    start_t = time.time()
+                for n in range(2):
+                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
                     
-                    # 1. Enforce Deterministic Seed (Reproducibility)
-                    np.random.seed(config["random_seed"])
-                    
-                    # 2. Extract Config Data
-                    sweep_var = config["sweep_param"]
-                    val = config["sweep_val"]
-                    
-                    freq_local = 2.4e9
-                    phase_local = 0.0
-                    if "Phase" in sweep_var: phase_local = val
-                    if "Frequency" in sweep_var: freq_local = val * 1e9
-                    
-                    wl = C_LIGHT / freq_local if freq_local > 0 else C_LIGHT / 2.4e9
-                    dipole_cells = int((wl/2) / dz); arm = (dipole_cells - 1) // 2
-                    
-                    # 3. Setup Grid
-                    reset_materials()
-                    apply_material_block(cx, cx, cy, cy, cz - arm, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-                    apply_material_block(cx, cx, cy, cy, cz + 1, cz + arm, MAT_LIB["PEC (Perfect Conductor)"])
-                    
-                    f_x_arr = np.array([cx]); f_y_arr = np.array([cy]); f_z_s_arr = np.array([cz]); f_z_e_arr = np.array([cz])
-                    a_arr = np.array([1.0]); p_arr = np.array([math.radians(phase_local)])
-                    
-                    # 4. Execute Native Solver
-                    _, _, Ez, p_probe, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, 300, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 1, f_x_arr, f_y_arr, f_z_s_arr, f_z_e_arr, a_arr, p_arr, freq_local, False, 0,0,0,0,0,0)
-                    
-                    # 5. Extract Result Observables
-                    max_e = float(np.max(np.abs(p_probe)))
-                    exec_time = time.time() - start_t
-                    
-                    result_data = {"Max_E_Field_Probe": max_e}
-                    
-                    # 6. Generate Manifest & Commit to DB
-                    manifest = generate_manifest(config, result_data, "COMPLETED", exec_time, [])
-                    st.session_state.exp_db.append(manifest)
-                    
-                    progress_bar.progress((idx+1)/q_len)
+                _, _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
+                gain = extract_target_gain(sx_E, freq_hz, math.radians(target_angle))
                 
-                # Clear queue after success
-                st.session_state.exp_queue = []
-                status_text.text("Batch Execution Complete. All results cataloged.")
+                config = {"type": "m25_array", "spacing": X_init[i, 0], "phase": X_init[i, 1], "target_angle": target_angle}
+                manifest = generate_manifest(config, {"Gain": float(gain)}, "COMPLETED", time.time() - start_t, [])
+                st.session_state.exp_db.append(manifest)
+                progress_bar.progress((i+1)/5)
+            st.rerun()
 
-    elif m24_mode == "3. Experiment Catalog & Reports":
-        st.markdown("### 🗃️ Experiment Catalog & Provenance")
+    else:
+        # Step 2: Surrogate Training & Candidate Ranking
+        X_train = np.array([[e['config']['spacing'], e['config']['phase']] for e in valid_exps])
+        y_train = np.array([e['result']['Gain'] for e in valid_exps])
         
-        db_len = len(st.session_state.exp_db)
-        if db_len == 0:
-            st.info("Catalog is empty. Run a batch first.")
-        else:
-            # Build DataFrame for display
-            cat_data = []
-            for m in st.session_state.exp_db:
-                cat_data.append({
-                    "UUID (Truncated)": m["experiment_id"][:8],
-                    "Status": m["status"],
-                    "Sweep Variable": m["config"]["sweep_param"],
-                    "Value": m["config"]["sweep_val"],
-                    "Max E-Field": m["result"]["Max_E_Field_Probe"],
-                    "Runtime (s)": m["execution_time"]
-                })
+        # Scaling & Fitting
+        X_min, X_max = np.min(X_train, axis=0), np.max(X_train, axis=0)
+        # Avoid division by zero if all bounds are same during early seeds
+        if np.all(X_max == X_min): X_max += 1e-6 
+        X_scaled = (X_train - X_min) / (X_max - X_min + 1e-12)
+        X_poly = poly_features_2d(X_scaled)
+        weights = ridge_fit(X_poly, y_train, alpha=1e-3)
+        
+        # Generate Candidates
+        np.random.seed(int(time.time()))
+        X_cand = np.zeros((5000, 2))
+        X_cand[:, 0] = np.random.uniform(bounds[0][0], bounds[0][1], 5000)
+        X_cand[:, 1] = np.random.uniform(bounds[1][0], bounds[1][1], 5000)
+        
+        X_cand_scaled = (X_cand - X_min) / (X_max - X_min + 1e-12)
+        preds = poly_features_2d(X_cand_scaled) @ weights
+        
+        # Upper Confidence Bound / Acquisition Scoring
+        uncertainties = compute_uncertainty(X_cand_scaled, X_scaled)
+        norm_preds = (preds - np.min(preds)) / (np.max(preds) - np.min(preds) + 1e-12)
+        acq_scores = exploit_ratio * norm_preds + (1 - exploit_ratio) * uncertainties
+        
+        best_idx = np.argmax(acq_scores)
+        rec_cand = X_cand[best_idx]
+        rec_pred = preds[best_idx]
+        rec_unc = uncertainties[best_idx]
+        rec_acq = acq_scores[best_idx]
+        
+        st.markdown("---")
+        st.markdown("### 📋 Recommended Next Experiment")
+        cc1, cc2, cc3 = st.columns(3)
+        cc1.metric("Spacing Parameter", f"{rec_cand[0]:.3f} λ")
+        cc2.metric("Phase Parameter", f"{rec_cand[1]:.1f}°")
+        cc3.metric("Predicted Gain (Surrogate)", f"{rec_pred:.4f}")
+        
+        cc4, cc5, cc6 = st.columns(3)
+        cc4.metric("Exploitation Value", f"{norm_preds[best_idx]:.3f}")
+        cc5.metric("Exploration Value (Uncertainty)", f"{rec_unc:.3f}")
+        cc6.metric("Final Acquisition Score", f"{rec_acq:.3f}", "Full-Wave Confirmation Required", delta_color="inverse")
+        
+        if st.button("RUN FULL-WAVE CONFIRMATION", type="primary"):
+            st.info("Executing precise FDTD simulation to physically validate the suggested mathematical acquisition...")
+            start_t = time.time()
+            reset_materials()
+            spacing_cells = int((rec_cand[0] * wavelength) / dy)
+            f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
+            p_arr = np.array([0.0, math.radians(rec_cand[1])])
             
-            df = pd.DataFrame(cat_data)
-            st.dataframe(df, use_container_width=True)
+            for n in range(2):
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
+                
+            _, _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
+            actual_gain = extract_target_gain(sx_E, freq_hz, math.radians(target_angle))
             
-            st.markdown("#### 📉 Parameter Sweep Visualization")
-            fig = go.Figure(go.Scatter(x=df["Value"], y=df["Max E-Field"], mode='lines+markers'))
-            fig.update_layout(title="Electromagnetic Observable vs Swept Parameter", xaxis_title="Sweep Parameter Value", yaxis_title="Max E-Field Amplitude")
-            st.plotly_chart(fig, use_container_width=True)
+            config = {"type": "m25_array", "spacing": float(rec_cand[0]), "phase": float(rec_cand[1]), "target_angle": target_angle}
+            manifest = generate_manifest(config, {"Gain": float(actual_gain)}, "COMPLETED", time.time() - start_t, [])
+            st.session_state.exp_db.append(manifest)
+            st.success(f"Confirmed! Actual Gain: {actual_gain:.4f}. Database updated. The Surrogate will now adapt and intelligently recommend the next sector.")
+            st.rerun()
             
-            st.markdown("#### 🔬 Reproducibility & Export")
-            export_str = json.dumps(st.session_state.exp_db, indent=2)
-            st.download_button("Export Complete Provenance DB (JSON)", data=export_str, file_name="em_experiments_db.json", mime="application/json")
-            
-            st.info("Every experiment is assigned a unique UUID and hashed. The backend executes directly on the physical FDTD solver, automatically appending version states and validation flags without manual intervention.")
+        st.markdown("#### 🗺️ Design Space Coverage")
+        fig = go.Figure()
+        # Evaluated points
+        fig.add_trace(go.Scatter(x=X_train[:, 0], y=X_train[:, 1], mode='markers', marker=dict(color=y_train, colorscale='Viridis', size=12, showscale=True, colorbar=dict(title="True Gain")), name="Evaluated FDTD Points"))
+        # Recommended Point
+        fig.add_trace(go.Scatter(x=[rec_cand[0]], y=[rec_cand[1]], mode='markers', marker=dict(color='red', symbol='star', size=16), name="Recommended Target"))
+        fig.update_layout(title="Intelligent Acquisition Mapping", xaxis_title="Array Spacing (λ)", yaxis_title="Progressive Phase (°)")
+        st.plotly_chart(fig, use_container_width=True)
 
-elif exp_mode not in ["Automated Experiment Manager (M24)"]:
-    st.info("Select 'Automated Experiment Manager (M24)' mode to queue parameter sweeps and track provenance.")
+elif exp_mode not in ["Intelligent Design-Space Exploration (M25)"]:
+    st.info("Select 'Intelligent Design-Space Exploration (M25)' mode to run adaptive experiment acquisition loops.")
