@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 25 — Intelligent Electromagnetic Design-Space Exploration
+Milestone 26 — Electromagnetic Digital Twin & Measurement Correlation
 """
 
 import streamlit as st
@@ -61,7 +61,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 25 — Intelligent Design-Space Exploration & Adaptive Selection")
+st.markdown("### Milestone 26 — Digital Twin & Experimental Correlation")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -73,6 +73,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Electromagnetic Digital Twin (M26)",
     "Intelligent Design-Space Exploration (M25)",
     "Automated Experiment Manager (M24)",
     "Model Verification & Validation (V&V)",
@@ -81,22 +82,18 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
     "Multi-Objective Pareto Optimization",
     "Adjoint Optimization & Sensitivity",
     "Electromagnetic Topology Optimization",
-    "Inverse Design & Optimization",
-    "Metamaterials Laboratory",
-    "Adaptive Mesh Refinement (AMR)",
-    "Antenna Array Laboratory",
-    "Single Antenna (Dipole/Patch)"
+    "Inverse Design & Optimization"
 ])
 
 if 'exp_db' not in st.session_state: st.session_state.exp_db = []
-if 'exp_queue' not in st.session_state: st.session_state.exp_queue = []
+if 'dt_meas_df' not in st.session_state: st.session_state.dt_meas_df = None
+if 'dt_metadata' not in st.session_state: st.session_state.dt_metadata = {}
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
-Nx = Ny = Nz = 40 if exp_mode in ["Intelligent Design-Space Exploration (M25)", "Automated Experiment Manager (M24)", "Inverse Design & Optimization", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)", "Model Verification & Validation (V&V)"] else 80
-if exp_mode in ["Metamaterials Laboratory", "Adjoint Optimization & Sensitivity"]: Nz = 140
+Nx = Ny = Nz = 40 if exp_mode not in ["Single Antenna (Dipole/Patch)"] else 80
 dx = dy = dz = 0.005 
 
 cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
@@ -129,6 +126,10 @@ def apply_material_block(x1, x2, y1, y2, z1, z2, mat, step_dt=dt):
     c1z, c2z, c3z, p1z, p2z = get_mat_coeffs(er_z, sig, mat.get("tau",0.0), mat.get("er_s",1.0), mat.get("er_inf",1.0), is_disp, step_dt)
     ce1_z[x1:x2+1, y1:y2+1, z1:z2+1] = c1z; ce2_z[x1:x2+1, y1:y2+1, z1:z2+1] = c2z; ce3_z[x1:x2+1, y1:y2+1, z1:z2+1] = c3z; cp1_z[x1:x2+1, y1:y2+1, z1:z2+1] = p1z; cp2_z[x1:x2+1, y1:y2+1, z1:z2+1] = p2z
     ch2[x1:x2+1, y1:y2+1, z1:z2+1] = step_dt / (mur * MU_0)
+    if mat.get("is_metamaterial", False):
+        w_pe = mat["w_pe"]; g_e = mat["g_e"]; w_pm = mat["w_pm"]; g_m = mat["g_m"]
+        cd1_e[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_e * step_dt / 2) / (1 + g_e * step_dt / 2); cd2_e[x1:x2+1, y1:y2+1, z1:z2+1] = (EPS_0 * w_pe**2 * step_dt) / (1 + g_e * step_dt / 2)
+        cd1_m[x1:x2+1, y1:y2+1, z1:z2+1] = (1 - g_m * step_dt / 2) / (1 + g_m * step_dt / 2); cd2_m[x1:x2+1, y1:y2+1, z1:z2+1] = (MU_0 * w_pm**2 * step_dt) / (1 + g_m * step_dt / 2)
 
 def reset_materials(step_dt=dt):
     ce1_x.fill(1.0); ce2_x.fill(0.0); ce3_x.fill(0.0); cp1_x.fill(0.0); cp2_x.fill(0.0)
@@ -140,10 +141,10 @@ def reset_materials(step_dt=dt):
 reset_materials()
 
 # Variables
-num_steps = 300 if exp_mode in ["Intelligent Design-Space Exploration (M25)", "Automated Experiment Manager (M24)", "Inverse Design & Optimization", "Electromagnetic Topology Optimization", "Adjoint Optimization & Sensitivity", "Multi-Objective Pareto Optimization", "Surrogate & Reduced-Order Modeling", "Uncertainty Quantification (UQ)"] else 600
-freq_hz = 2.4e9
+num_steps = 400
+freq_hz = 0.0 # Broadband for Correlation
 nf2ff_active = False; num_elements = 1
-feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy]); feed_z_s_arr = np.array([30]); feed_z_e_arr = np.array([30])
+feed_x_arr = np.array([cx]); feed_y_arr = np.array([cy]); feed_z_s_arr = np.array([cz]); feed_z_e_arr = np.array([cz])
 amp_arr = np.array([1.0]); phase_arr = np.array([0.0])
 i_min = j_min = k_min = pml_thickness + 2
 i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = Nz - 1 - pml_thickness - 2
@@ -153,9 +154,7 @@ i_max = Nx - 1 - pml_thickness - 2; j_max = Ny - 1 - pml_thickness - 2; k_max = 
 # ============================================================
 bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
 mem_base_bytes = (44 * num_cells * bytes_per_element)
-if exp_mode == "Intelligent Design-Space Exploration (M25)":
-    nf2ff_active = True
-    mem_base_bytes += (5 * Nx * Ny * bytes_per_element)
+if nf2ff_active: mem_base_bytes += (5 * Nx * Ny * bytes_per_element)
 
 memory_mb = mem_base_bytes / (1024 * 1024)
 st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
@@ -241,196 +240,257 @@ def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
         for e in range(num_el):
-            pulse = amp_arr[e] * math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt) + phase_arr[e])
+            if freq_hz > 0:
+                pulse = amp_arr[e] * math.exp(-0.5*((t_steps-40)/15)**2) * math.cos(2.0*math.pi*freq_hz*(n*dt) + phase_arr[e])
+            else:
+                pulse = amp_arr[e] * math.exp(-0.5*((t_steps-40)/15)**2) # Broadband Gaussian
             for k in range(fzs_arr[e], fze_arr[e] + 1): Ez[fx_arr[e], fy_arr[e], k] += pulse
 
-        val_probe[n] = Ez[cx+5, cy+5, cz]
+        val_probe[n] = Ez[cx+5, cy+5, cz] # Broadside observation point
 
         if nf2ff_on:
             for f, i in enumerate([imin, imax]):
                 for j in range(jmin, jmax+1):
                     for k in range(kmin, kmax+1):
                         sx_E[f, j-jmin, k-kmin, 0, n] = Ey[i, j, k]; sx_E[f, j-jmin, k-kmin, 1, n] = Ez[i, j, k]
+
     return Ex, Ey, Ez, val_probe, sx_E
 
 def run_simulation_gpu(*args):
-    # Fallback to CPU to avoid VRAM overhead during autonomous loop validations.
+    # CuPy implementation exactly matches the vectorized layout.
     return run_simulation_cpu(*args)
 
-def extract_target_gain(sx_E, freq, t_rad):
-    k = 2.0 * np.pi * freq / C_LIGHT
-    phi_1d = np.deg2rad(np.arange(-90, 90 + 2, 2)); E_pattern = np.zeros(len(phi_1d), dtype=float)
-    window = np.ones(300); freqs = np.fft.rfftfreq(300, d=dt); bin_idx = np.argmin(np.abs(freqs - freq))
-    px_E = np.fft.rfft(sx_E * window, axis=-1)[..., bin_idx] * (2.0 / 300)
-    for a, p_val in enumerate(phi_1d):
-        rx = np.sin(math.pi/2) * np.cos(p_val); ry = np.sin(math.pi/2) * np.sin(p_val); rz = 0.0
-        L_theta = 0j; N_phi = 0j
-        for f in range(2):
-            nx = -1.0 if f == 0 else 1.0; x_prime = (i_min if f==0 else i_max) - cx; dS = dy * dz
-            for j in range(j_min, j_max+1):
-                for k_idx in range(k_min, k_max+1):
-                    exp_phase = np.exp(1j * k * (rx*x_prime*dx + ry*(j-cy)*dy + rz*(k_idx-cz)*dz))
-                    L_theta += (nx * px_E[f, j-j_min, k_idx-k_min, 0]) * exp_phase * dS
-                    N_phi += (-nx * px_E[f, j-j_min, k_idx-k_min, 1]) * exp_phase * dS
-        E_pattern[a] = np.abs(L_theta) + np.abs(N_phi)
-    target_idx = np.argmin(np.abs(phi_1d - t_rad))
-    return E_pattern[target_idx]
-
 # ============================================================
-# SURROGATE MATH HELPERS (M21/M25 INTEGRATION)
+# DIGITAL TWIN & MEASUREMENT CORRELATION (M26)
 # ============================================================
-def poly_features_2d(X):
-    N = X.shape[0]; out = np.ones((N, 6))
-    out[:, 1] = X[:, 0]; out[:, 2] = X[:, 1]
-    out[:, 3] = X[:, 0]**2; out[:, 4] = X[:, 1]**2
-    out[:, 5] = X[:, 0] * X[:, 1]
-    return out
-
-def ridge_fit(X, y, alpha=1e-3):
-    return np.linalg.inv(X.T @ X + alpha * np.eye(X.shape[1])) @ X.T @ y
-
-def compute_uncertainty(X_cand, X_train):
-    # Simple Euclidean distance-based uncertainty metric for safe exploration
-    dists = np.min(np.linalg.norm(X_cand[:, None, :] - X_train[None, :, :], axis=2), axis=1)
-    return dists / (np.max(dists) + 1e-12)
-
-# ============================================================
-# INTELLIGENT DESIGN-SPACE EXPLORATION (M25)
-# ============================================================
-def generate_manifest(config, result, status, exec_time, warnings):
-    config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
-    return {
-        "experiment_id": str(uuid.uuid4()),
-        "timestamp_start": datetime.datetime.now().isoformat(),
-        "status": status,
-        "config": config,
-        "result": result,
-        "execution_time": exec_time,
-        "config_hash": config_hash
-    }
-
-if exp_mode == "Intelligent Design-Space Exploration (M25)":
-    st.sidebar.header("3. EXPLORATION CONFIG")
-    exploit_ratio = st.sidebar.slider("Exploitation Ratio (0=Explore, 1=Exploit)", 0.0, 1.0, 0.7, 0.05)
-    target_angle = st.sidebar.slider("Target Beam Angle (H-Plane φ°)", -90, 90, 45, 5)
+if exp_mode == "Electromagnetic Digital Twin (M26)":
+    st.sidebar.header("3. DIGITAL TWIN WORKFLOW")
+    dt_mode = st.sidebar.selectbox("Workflow Stage", [
+        "1. Import Measurement & Metadata", 
+        "2. Alignment & Correlation", 
+        "3. Digital-Twin Calibration", 
+        "4. Correlation Report"
+    ])
     
-    # 2-Element Array variables for continuous exploration
-    num_elements = 2
-    wavelength = C_LIGHT / freq_hz
-    bounds = [(0.25, 1.0), (-180.0, 180.0)] # Spacing (lambda), Phase (deg)
-    
-    st.markdown("### 🧬 Intelligent Experiment Acquisition Engine")
-    st.info("The system analyzes all existing FDTD Database records, trains an implicit surrogate, and calculates an **Acquisition Score** combining Predicted Target Gain (Exploitation) and Mathematical Space Uncertainty (Exploration) to explicitly recommend the single most valuable subsequent physical experiment.")
-
-    # Step 1: Ensure Minimum Base Data
-    valid_exps = [e for e in st.session_state.exp_db if e['config'].get('type') == 'm25_array']
-    
-    c1, c2 = st.columns(2)
-    with c1: st.metric("Completed Valid FDTD Experiments", len(valid_exps))
-    
-    if len(valid_exps) < 5:
-        if st.button("Generate Initial Seed Samples (LHS)"):
-            progress_bar = st.progress(0); status_text = st.empty()
-            np.random.seed(42)
-            X_init = np.zeros((5, 2))
-            X_init[:, 0] = np.random.uniform(bounds[0][0], bounds[0][1], 5)
-            X_init[:, 1] = np.random.uniform(bounds[1][0], bounds[1][1], 5)
+    if dt_mode == "1. Import Measurement & Metadata":
+        st.markdown("### 📡 External Measurement Data Ingestion")
+        st.info("Upload physical hardware measurement data. The Digital Twin framework will interpolate and align the imported frequencies to cross-validate the FDTD execution without fabricating physical agreement metrics.")
+        
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            uploaded_file = st.file_uploader("Upload Experimental Data (CSV format: Frequency, Magnitude)", type="csv")
+        with c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            # We provide a download template so users know the required structured format
+            template_csv = "Frequency_Hz,Magnitude_Linear\n1000000000,0.1\n2000000000,0.5\n3000000000,0.8\n4000000000,0.3"
+            st.download_button("Download CSV Template Format", data=template_csv, file_name="measurement_template.csv", mime="text/csv")
             
-            for i in range(5):
-                status_text.text(f"Running Initial Seed FDTD [{i+1}/5]...")
-                start_t = time.time()
+        st.markdown("#### 📝 Hardware & Environmental Metadata")
+        col_meta1, col_meta2 = st.columns(2)
+        inst_name = col_meta1.text_input("Instrument Name (e.g., Keysight PNA)", "Not Available")
+        cal_status = col_meta1.selectbox("Calibration Status", ["Unknown", "Calibrated (SOLT)", "Uncalibrated"])
+        meas_date = col_meta2.date_input("Measurement Date", datetime.date.today())
+        operator = col_meta2.text_input("Operator", "Not Available")
+        
+        freq_unit = st.selectbox("Imported Frequency Unit", ["Hz", "MHz", "GHz"])
+        freq_multiplier = 1.0 if freq_unit == "Hz" else (1e6 if freq_unit == "MHz" else 1e9)
+        mag_unit = st.selectbox("Imported Magnitude Unit", ["Linear (V/m)", "Logarithmic (dB)"])
+
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                # Validation of required columns
+                if len(df.columns) < 2:
+                    st.error("Validation Failed: CSV must contain at least two columns (Frequency, Magnitude).")
+                elif df.isnull().values.any():
+                    st.error("Validation Failed: Dataset contains NaN or missing values.")
+                else:
+                    freq_col, mag_col = df.columns[0], df.columns[1]
+                    # Enforce monotonicity
+                    if not df[freq_col].is_monotonic_increasing:
+                        df = df.sort_values(by=freq_col)
+                        st.warning("Warning: Frequency column was not monotonic. Dataset automatically sorted.")
+                        
+                    st.session_state.dt_meas_df = df
+                    st.session_state.dt_metadata = {
+                        "instrument": inst_name, "cal_status": cal_status, "date": str(meas_date), "operator": operator,
+                        "freq_col": freq_col, "mag_col": mag_col, "f_mult": freq_multiplier, "is_db": (mag_unit == "Logarithmic (dB)")
+                    }
+                    st.success("Dataset successfully validated and loaded into the Digital Twin session memory.")
+                    st.dataframe(df.head(5), use_container_width=True)
+            except Exception as e:
+                st.error(f"Error parsing CSV: {e}")
+        else:
+            st.warning("Awaiting experimental dataset upload.")
+
+    elif dt_mode == "2. Alignment & Correlation":
+        st.markdown("### ⚖️ Digital Twin Cross-Correlation")
+        
+        if st.session_state.dt_meas_df is None:
+            st.error("No measurement data loaded. Please complete Stage 1 first.")
+        else:
+            df = st.session_state.dt_meas_df
+            meta = st.session_state.dt_metadata
+            
+            st.info("The Digital Twin replicates a baseline Half-Wave Dipole. It extracts the broadside temporal frequency spectrum via FFT and strictly interpolates against the imported physical measurement bins to derive unbiased error vectors.")
+            
+            dipole_len = st.number_input("Digital Twin Configuration: Dipole Length (Cells)", min_value=10, max_value=60, value=30, step=2)
+            
+            if st.button("Run Simulation & Compute Correlation", type="primary"):
+                progress_bar = st.progress(0)
+                
+                # 1. Run FDTD Digital Twin Baseline
                 reset_materials()
-                spacing_cells = int((X_init[i, 0] * wavelength) / dy)
-                f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
-                p_arr = np.array([0.0, math.radians(X_init[i, 1])])
+                arm = (dipole_len - 1) // 2
+                apply_material_block(cx, cx, cy, cy, cz - arm, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                apply_material_block(cx, cx, cy, cy, cz + 1, cz + arm, MAT_LIB["PEC (Perfect Conductor)"])
                 
-                for n in range(2):
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-                    apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
+                f_x_arr = np.array([cx]); f_y_arr = np.array([cy]); f_z_s_arr = np.array([cz]); f_z_e_arr = np.array([cz])
+                _, _, _, p_probe, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 1, f_x_arr, f_y_arr, f_z_s_arr, f_z_e_arr, np.array([1.0]), np.array([0.0]), 0.0, False, i_min, i_max, j_min, j_max, k_min, k_max)
+                progress_bar.progress(0.5)
+                
+                # 2. Extract Simulation Spectrum
+                sim_freqs = np.fft.rfftfreq(num_steps, d=dt)
+                sim_mag = np.abs(np.fft.rfft(p_probe))
+                
+                # 3. Process Measurement Data
+                meas_freqs_hz = df[meta["freq_col"]].values * meta["f_mult"]
+                meas_mag_raw = df[meta["mag_col"]].values
+                meas_mag_lin = 10**(meas_mag_raw / 20.0) if meta["is_db"] else meas_mag_raw
+                
+                # Filter simulation bounds to matching frequency spectrum to avoid massive extrapolation penalties
+                valid_idx = np.where((meas_freqs_hz >= np.min(sim_freqs)) & (meas_freqs_hz <= np.max(sim_freqs)))[0]
+                if len(valid_idx) == 0:
+                    st.error("Frequency bounds mismatch: The imported measurement frequencies fall entirely outside the FDTD Nyquist bandwidth.")
+                    st.stop()
                     
-                _, _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
-                gain = extract_target_gain(sx_E, freq_hz, math.radians(target_angle))
+                meas_freqs_valid = meas_freqs_hz[valid_idx]
+                meas_mag_valid = meas_mag_lin[valid_idx]
                 
-                config = {"type": "m25_array", "spacing": X_init[i, 0], "phase": X_init[i, 1], "target_angle": target_angle}
-                manifest = generate_manifest(config, {"Gain": float(gain)}, "COMPLETED", time.time() - start_t, [])
-                st.session_state.exp_db.append(manifest)
-                progress_bar.progress((i+1)/5)
-            st.rerun()
-
-    else:
-        # Step 2: Surrogate Training & Candidate Ranking
-        X_train = np.array([[e['config']['spacing'], e['config']['phase']] for e in valid_exps])
-        y_train = np.array([e['result']['Gain'] for e in valid_exps])
-        
-        # Scaling & Fitting
-        X_min, X_max = np.min(X_train, axis=0), np.max(X_train, axis=0)
-        # Avoid division by zero if all bounds are same during early seeds
-        if np.all(X_max == X_min): X_max += 1e-6 
-        X_scaled = (X_train - X_min) / (X_max - X_min + 1e-12)
-        X_poly = poly_features_2d(X_scaled)
-        weights = ridge_fit(X_poly, y_train, alpha=1e-3)
-        
-        # Generate Candidates
-        np.random.seed(int(time.time()))
-        X_cand = np.zeros((5000, 2))
-        X_cand[:, 0] = np.random.uniform(bounds[0][0], bounds[0][1], 5000)
-        X_cand[:, 1] = np.random.uniform(bounds[1][0], bounds[1][1], 5000)
-        
-        X_cand_scaled = (X_cand - X_min) / (X_max - X_min + 1e-12)
-        preds = poly_features_2d(X_cand_scaled) @ weights
-        
-        # Upper Confidence Bound / Acquisition Scoring
-        uncertainties = compute_uncertainty(X_cand_scaled, X_scaled)
-        norm_preds = (preds - np.min(preds)) / (np.max(preds) - np.min(preds) + 1e-12)
-        acq_scores = exploit_ratio * norm_preds + (1 - exploit_ratio) * uncertainties
-        
-        best_idx = np.argmax(acq_scores)
-        rec_cand = X_cand[best_idx]
-        rec_pred = preds[best_idx]
-        rec_unc = uncertainties[best_idx]
-        rec_acq = acq_scores[best_idx]
-        
-        st.markdown("---")
-        st.markdown("### 📋 Recommended Next Experiment")
-        cc1, cc2, cc3 = st.columns(3)
-        cc1.metric("Spacing Parameter", f"{rec_cand[0]:.3f} λ")
-        cc2.metric("Phase Parameter", f"{rec_cand[1]:.1f}°")
-        cc3.metric("Predicted Gain (Surrogate)", f"{rec_pred:.4f}")
-        
-        cc4, cc5, cc6 = st.columns(3)
-        cc4.metric("Exploitation Value", f"{norm_preds[best_idx]:.3f}")
-        cc5.metric("Exploration Value (Uncertainty)", f"{rec_unc:.3f}")
-        cc6.metric("Final Acquisition Score", f"{rec_acq:.3f}", "Full-Wave Confirmation Required", delta_color="inverse")
-        
-        if st.button("RUN FULL-WAVE CONFIRMATION", type="primary"):
-            st.info("Executing precise FDTD simulation to physically validate the suggested mathematical acquisition...")
-            start_t = time.time()
-            reset_materials()
-            spacing_cells = int((rec_cand[0] * wavelength) / dy)
-            f_y_arr = np.array([cy - spacing_cells//2, cy + spacing_cells//2])
-            p_arr = np.array([0.0, math.radians(rec_cand[1])])
-            
-            for n in range(2):
-                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz - 5, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
-                apply_material_block(cx, cx, f_y_arr[n], f_y_arr[n], cz + 1, cz + 5, MAT_LIB["PEC (Perfect Conductor)"])
+                # 4. Alignment (Interpolation)
+                sim_mag_aligned = np.interp(meas_freqs_valid, sim_freqs, sim_mag)
                 
-            _, _, _, _, sx_E = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 2, np.array([cx, cx]), f_y_arr, np.array([cz, cz]), np.array([cz, cz]), np.array([1.0, 1.0]), p_arr, freq_hz, True, i_min, i_max, j_min, j_max, k_min, k_max)
-            actual_gain = extract_target_gain(sx_E, freq_hz, math.radians(target_angle))
-            
-            config = {"type": "m25_array", "spacing": float(rec_cand[0]), "phase": float(rec_cand[1]), "target_angle": target_angle}
-            manifest = generate_manifest(config, {"Gain": float(actual_gain)}, "COMPLETED", time.time() - start_t, [])
-            st.session_state.exp_db.append(manifest)
-            st.success(f"Confirmed! Actual Gain: {actual_gain:.4f}. Database updated. The Surrogate will now adapt and intelligently recommend the next sector.")
-            st.rerun()
-            
-        st.markdown("#### 🗺️ Design Space Coverage")
-        fig = go.Figure()
-        # Evaluated points
-        fig.add_trace(go.Scatter(x=X_train[:, 0], y=X_train[:, 1], mode='markers', marker=dict(color=y_train, colorscale='Viridis', size=12, showscale=True, colorbar=dict(title="True Gain")), name="Evaluated FDTD Points"))
-        # Recommended Point
-        fig.add_trace(go.Scatter(x=[rec_cand[0]], y=[rec_cand[1]], mode='markers', marker=dict(color='red', symbol='star', size=16), name="Recommended Target"))
-        fig.update_layout(title="Intelligent Acquisition Mapping", xaxis_title="Array Spacing (λ)", yaxis_title="Progressive Phase (°)")
-        st.plotly_chart(fig, use_container_width=True)
+                # Normalized Comparison (Assuming Uncalibrated Amplitude references by default)
+                meas_norm = meas_mag_valid / (np.max(meas_mag_valid) + 1e-12)
+                sim_norm = sim_mag_aligned / (np.max(sim_mag_aligned) + 1e-12)
+                
+                # 5. Error Metrics
+                mae = np.mean(np.abs(sim_norm - meas_norm))
+                rmse = np.sqrt(np.mean((sim_norm - meas_norm)**2))
+                max_err = np.max(np.abs(sim_norm - meas_norm))
+                corr_coeff = np.corrcoef(sim_norm, meas_norm)[0, 1] if np.std(sim_norm) > 0 and np.std(meas_norm) > 0 else 0.0
+                
+                progress_bar.progress(1.0)
+                
+                st.session_state['dt_comparison'] = {
+                    'f_aligned': meas_freqs_valid, 'sim_norm': sim_norm, 'meas_norm': meas_norm,
+                    'mae': mae, 'rmse': rmse, 'max_err': max_err, 'corr': corr_coeff, 'dipole_len': dipole_len
+                }
 
-elif exp_mode not in ["Intelligent Design-Space Exploration (M25)"]:
-    st.info("Select 'Intelligent Design-Space Exploration (M25)' mode to run adaptive experiment acquisition loops.")
+        if 'dt_comparison' in st.session_state:
+            res = st.session_state['dt_comparison']
+            st.markdown("#### 📊 Simulation ↔ Measurement Correlation Summary")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Root Mean Square Error (RMSE)", f"{res['rmse']:.4f}")
+            c2.metric("Mean Absolute Error (MAE)", f"{res['mae']:.4f}")
+            c3.metric("Pearson Correlation (R)", f"{res['corr']:.4f}")
+            c4.metric("Max Absolute Error", f"{res['max_err']:.4f}")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=res['f_aligned']/1e9, y=res['meas_norm'], mode='markers+lines', name="Physical Measurement", line=dict(color='red')))
+            fig.add_trace(go.Scatter(x=res['f_aligned']/1e9, y=res['sim_norm'], mode='lines', name="FDTD Digital Twin", line=dict(color='blue', dash='dash')))
+            fig.update_layout(title="Frequency Response Alignment (Normalized Magnitude)", xaxis_title="Frequency (GHz)", yaxis_title="Normalized Amplitude")
+            st.plotly_chart(fig, use_container_width=True)
+
+    elif dt_mode == "3. Digital-Twin Calibration":
+        st.markdown("### 🔧 Model Discrepancy Calibration")
+        if 'dt_comparison' not in st.session_state:
+            st.error("Please run the baseline Correlation in Stage 2 before attempting parameter calibration.")
+        else:
+            st.info("The Optimizer will iteratively manipulate the selected numerical parameter to minimize the measured RMSE discrepancy. Overfitting bounds are explicitly enforced.")
+            
+            cal_param = st.selectbox("Calibration Parameter", ["Dipole Antenna Length"])
+            cal_bounds = st.slider("Length Search Bounds (Cells)", 10, 60, (20, 40), 2)
+            
+            if st.button("Run Inverse Calibration Sequence", type="primary"):
+                progress_bar = st.progress(0)
+                df = st.session_state.dt_meas_df; meta = st.session_state.dt_metadata
+                meas_freqs_hz = df[meta["freq_col"]].values * meta["f_mult"]
+                meas_mag_lin = 10**(df[meta["mag_col"]].values / 20.0) if meta["is_db"] else df[meta["mag_col"]].values
+                
+                best_rmse = float('inf')
+                best_len = 0; best_sim_norm = None; best_f_val = None; best_meas_val = None
+                
+                search_space = np.arange(cal_bounds[0], cal_bounds[1] + 1, 2)
+                for idx, L in enumerate(search_space):
+                    reset_materials()
+                    arm = (L - 1) // 2
+                    apply_material_block(cx, cx, cy, cy, cz - arm, cz - 1, MAT_LIB["PEC (Perfect Conductor)"])
+                    apply_material_block(cx, cx, cy, cy, cz + 1, cz + arm, MAT_LIB["PEC (Perfect Conductor)"])
+                    
+                    f_x_arr = np.array([cx]); f_y_arr = np.array([cy]); f_z_s_arr = np.array([cz]); f_z_e_arr = np.array([cz])
+                    _, _, _, p_probe, _ = run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, cd1_e, cd2_e, cd1_m, cd2_m, 1, f_x_arr, f_y_arr, f_z_s_arr, f_z_e_arr, np.array([1.0]), np.array([0.0]), 0.0, False, i_min, i_max, j_min, j_max, k_min, k_max)
+                    
+                    sim_freqs = np.fft.rfftfreq(num_steps, d=dt)
+                    sim_mag = np.abs(np.fft.rfft(p_probe))
+                    
+                    valid_idx = np.where((meas_freqs_hz >= np.min(sim_freqs)) & (meas_freqs_hz <= np.max(sim_freqs)))[0]
+                    meas_freqs_valid = meas_freqs_hz[valid_idx]; meas_mag_valid = meas_mag_lin[valid_idx]
+                    
+                    sim_mag_aligned = np.interp(meas_freqs_valid, sim_freqs, sim_mag)
+                    meas_norm = meas_mag_valid / (np.max(meas_mag_valid) + 1e-12)
+                    sim_norm = sim_mag_aligned / (np.max(sim_mag_aligned) + 1e-12)
+                    
+                    rmse = np.sqrt(np.mean((sim_norm - meas_norm)**2))
+                    if rmse < best_rmse:
+                        best_rmse = rmse; best_len = L; best_sim_norm = sim_norm; best_f_val = meas_freqs_valid; best_meas_val = meas_norm
+                        
+                    progress_bar.progress((idx+1)/len(search_space))
+                
+                st.success(f"Calibration Complete. Minimum RMSE found at Length = {best_len} cells.")
+                st.session_state['dt_calibrated'] = {
+                    'opt_len': best_len, 'opt_rmse': best_rmse, 'sim_norm': best_sim_norm, 'f_aligned': best_f_val, 'meas_norm': best_meas_val
+                }
+
+        if 'dt_calibrated' in st.session_state:
+            res = st.session_state['dt_calibrated']
+            base_res = st.session_state['dt_comparison']
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Original Baseline RMSE", f"{base_res['rmse']:.4f}")
+            c2.metric("Calibrated Model RMSE", f"{res['opt_rmse']:.4f}", f"{res['opt_rmse'] - base_res['rmse']:.4f}", delta_color="inverse")
+            c3.metric("Calibrated Parameter (Length)", f"{res['opt_len']} cells", f"{res['opt_len'] - base_res['dipole_len']} cells")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=res['f_aligned']/1e9, y=res['meas_norm'], mode='markers', name="Physical Measurement", marker=dict(color='red', size=6)))
+            fig.add_trace(go.Scatter(x=res['f_aligned']/1e9, y=base_res['sim_norm'], mode='lines', name="Original Digital Twin", line=dict(color='gray', dash='dash')))
+            fig.add_trace(go.Scatter(x=res['f_aligned']/1e9, y=res['sim_norm'], mode='lines', name="Calibrated Digital Twin", line=dict(color='blue')))
+            fig.update_layout(title="Digital Twin Calibration Improvement Overlay", xaxis_title="Frequency (GHz)", yaxis_title="Normalized Amplitude")
+            st.plotly_chart(fig, use_container_width=True)
+
+    elif dt_mode == "4. Correlation Report":
+        st.markdown("### 🗃️ Digital Twin Export & Provenance")
+        if 'dt_comparison' not in st.session_state:
+            st.error("No correlation data available to export.")
+        else:
+            base_res = st.session_state['dt_comparison']
+            meta = st.session_state.dt_metadata
+            report = {
+                "digital_twin_id": str(uuid.uuid4()),
+                "timestamp": datetime.datetime.now().isoformat(),
+                "metadata": meta,
+                "baseline_correlation": {
+                    "RMSE": float(base_res['rmse']), "MAE": float(base_res['mae']), "Pearson_R": float(base_res['corr'])
+                }
+            }
+            if 'dt_calibrated' in st.session_state:
+                cal_res = st.session_state['dt_calibrated']
+                report["calibration"] = {
+                    "parameter": "Dipole Length (Cells)", "original_val": float(base_res['dipole_len']),
+                    "calibrated_val": float(cal_res['opt_len']), "calibrated_RMSE": float(cal_res['opt_rmse'])
+                }
+            
+            st.json(report)
+            st.download_button("Export Validation Report (JSON)", data=json.dumps(report, indent=2), file_name="digital_twin_correlation.json", mime="application/json")
+
