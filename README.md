@@ -79,9 +79,12 @@ Fuses the Surrogate Engine with the Experiment Database to create an "Intelligen
 
 ## Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
 Establishes a rigorous ingestion and calibration framework linking physical, external hardware measurements to the computational FDTD domain.
-* **Metadata Enforcement & Alignment:** Ingests external measurement bounds (via CSV upload) and explicitly enforces operator, calibration status, and dynamic unit conversions (e.g., Logarithmic to Linear Voltage extraction). FDTD responses are natively interpolated via numerical alignment algorithms against the physical frequency bins, preventing artificial resolution artifacts. 
-* **Model Correlation Analytics:** Computes continuous quantitative assessments between the Virtual Digital Twin and the real-world dataset. Derives strict Root Mean Square Error (RMSE), Mean Absolute Error (MAE), and Pearson Correlation mapping variables to identify initial model discrepancy dynamically.
-* **Constrained Parameter Calibration:** Equips users with a guarded Inverse-Calibration loop capable of subtly altering structural boundaries (e.g., geometric scale lengths) to map the FDTD result over the hardware result. The engine prevents numerical overfitting by charting continuous overlay vectors confirming physical boundary tolerances.
+
+## Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
+Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with a dynamic `MOCK` Instrument Backend to simulate and validate automated laboratory execution loops prior to physical equipment hookups.
+* **Hardware Abstraction Layer (HAL):** Systematically abstracts rigid physical commands (`connect()`, `calibrate()`, `acquire()`) via class-based object representations. Exposes a live Hardware Dashboard tracking critical instrument state vectors.
+* **Measurement Sequence Engine:** Enforces physical safety logic bounds (e.g., rejecting input parameters exceeding Hardware Capability specs). The sequence executes programmatic iteration loops over the Mock VNA, rigorously extracting signal noise and repeatability derivations (SNR & Max Deviation) from the returned statistical variance.
+* **Digital Twin Interoperability:** Implements data-flow isolation formatting all extracted matrices under strict `MOCK DATA` provenance tagging. Safely exports finalized, scaled experimental arrays directly to the Digital Twin framework (M26) for algorithmic physics-matching evaluation.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -110,3 +113,4 @@ Establishes a rigorous ingestion and calibration framework linking physical, ext
 - [x] Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
 - [x] Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
 - [x] Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
+- [x] Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
