@@ -75,9 +75,13 @@ Deploys a formal, rigorous V&V dashboard strictly differentiating "Code Verifica
 Transforms the isolated electromagnetic solver into a formal Reproducible Research Database featuring explicit JSON provenance ledgers and Batch execution queuing.
 
 ## Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
-Fuses the Surrogate Engine (M21) with the Experiment Database (M24) to create an "Intelligent Acquisition System" utilizing Upper Confidence Bound (UCB) algorithms.
-* **Human-In-The-Loop Active Learning:** The system evaluates thousands of random candidates mathematically in the background, identifying the single geometric parameter with the highest Acquisition Score (balancing Predicted Gain vs Spatial Uncertainty). It explicitly awaits a `RUN FULL-WAVE CONFIRMATION` command, guaranteeing final data is validated physically by the FDTD kernel.
-* **Adaptive Surrogate Regeneration:** Each user-confirmed physical FDTD iteration is structurally appended into the core database. The UI inherently reruns the Surrogate training pass immediately post-append, dynamically re-shaping the mathematical prediction threshold mapping to pinpoint untested sparse boundary locations flawlessly.
+Fuses the Surrogate Engine with the Experiment Database to create an "Intelligent Acquisition System" utilizing Upper Confidence Bound (UCB) Active Learning algorithms.
+
+## Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
+Establishes a rigorous ingestion and calibration framework linking physical, external hardware measurements to the computational FDTD domain.
+* **Metadata Enforcement & Alignment:** Ingests external measurement bounds (via CSV upload) and explicitly enforces operator, calibration status, and dynamic unit conversions (e.g., Logarithmic to Linear Voltage extraction). FDTD responses are natively interpolated via numerical alignment algorithms against the physical frequency bins, preventing artificial resolution artifacts. 
+* **Model Correlation Analytics:** Computes continuous quantitative assessments between the Virtual Digital Twin and the real-world dataset. Derives strict Root Mean Square Error (RMSE), Mean Absolute Error (MAE), and Pearson Correlation mapping variables to identify initial model discrepancy dynamically.
+* **Constrained Parameter Calibration:** Equips users with a guarded Inverse-Calibration loop capable of subtly altering structural boundaries (e.g., geometric scale lengths) to map the FDTD result over the hardware result. The engine prevents numerical overfitting by charting continuous overlay vectors confirming physical boundary tolerances.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -105,3 +109,4 @@ Fuses the Surrogate Engine (M21) with the Experiment Database (M24) to create an
 - [x] Milestone 23 — Electromagnetic Model Verification, Validation & Experimental Correlation
 - [x] Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
 - [x] Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
+- [x] Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
