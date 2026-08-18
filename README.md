@@ -82,9 +82,12 @@ Establishes a rigorous ingestion and calibration framework linking physical, ext
 
 ## Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
 Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with a dynamic `MOCK` Instrument Backend to simulate and validate automated laboratory execution loops prior to physical equipment hookups.
-* **Hardware Abstraction Layer (HAL):** Systematically abstracts rigid physical commands (`connect()`, `calibrate()`, `acquire()`) via class-based object representations. Exposes a live Hardware Dashboard tracking critical instrument state vectors.
-* **Measurement Sequence Engine:** Enforces physical safety logic bounds (e.g., rejecting input parameters exceeding Hardware Capability specs). The sequence executes programmatic iteration loops over the Mock VNA, rigorously extracting signal noise and repeatability derivations (SNR & Max Deviation) from the returned statistical variance.
-* **Digital Twin Interoperability:** Implements data-flow isolation formatting all extracted matrices under strict `MOCK DATA` provenance tagging. Safely exports finalized, scaled experimental arrays directly to the Digital Twin framework (M26) for algorithmic physics-matching evaluation.
+
+## Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
+Expands the Hardware Abstraction Layer into a standardized SCPI-driven Vector Network Analyzer (VNA) interface handling complex S-Parameters exclusively.
+* **SCPI Command Translation:** Constructs an internal command handler recognizing formal standard instrument queries (`*IDN?`, `SENS:FREQ:STAR`, `SOUR:POW`) resolving them deterministically within the mock state constraints to mirror real hardware logic.
+* **Complex S-Parameter Extraction & Geometry:** Simulates actual 4-port reactive hardware limits by evaluating explicit complex parameters via modeled RLC trajectories. Outputs strictly mapped $\Gamma$ responses for analytical viewing. 
+* **Analytics & Touchstone Generation:** Implements native VSWR $\frac{1 + |\Gamma|}{1 - |\Gamma|}$, Return Loss calculations, automated resonance mapping, and generates explicit $Z_0$ matched Smith Charts dynamically before enabling standardized `.s2p` Touchstone exports directly from the resulting memory cache.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -114,3 +117,4 @@ Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with
 - [x] Milestone 25 — Intelligent Electromagnetic Design-Space Exploration & Adaptive Experiment Selection
 - [x] Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
 - [x] Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
+- [x] Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
