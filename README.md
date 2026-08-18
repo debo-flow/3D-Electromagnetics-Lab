@@ -88,9 +88,12 @@ Expands the Hardware Abstraction Layer into a standardized SCPI-driven Vector Ne
 
 ## Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
 Bridges the M28 RF Abstraction with a formal Spatial Positioning engine to automate full-sphere 3D Antenna Characterization measurements dynamically.
-* **Spatial Scan Execution:** Operators define spherical coordinate ($\theta, \phi$) scan limits. The engine iterates natively over a `MockPositioner` abstraction, demanding physical safety clearances prior to invoking positional translations and simultaneous VNA RF triggers.
-* **Realistic Error Implantation:** Mock datasets are securely demarcated from simulations via embedded stochastic measurement flaws—including Amplitude Gaussian noise, Phase jitter, and strict Positional tracking deviance representing mechanical backlash limits.
-* **Advanced Beam Analytics & Error Mapping:** Reconstructs acquired volumetric datasets into Plotly 3D Cartesian surfaces and explicit 2D E/H-plane cut topologies. Identifies peak Main Lobe directivity, evaluates Half-Power Beamwidth (HPBW), computes Front-to-Back Ratios (FBR), and ultimately overlays the dataset directly onto the M26 Digital Twin to extract continuous 2D Angular RMSE Error Maps.
+
+## Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
+Solidifies the end-to-end Antenna Metrology framework by uniting a rigorous Plane-Wave Spectral `NF2FF` math engine with a 2D Planar Spatial Scanner abstraction. 
+* **Mock Spatial Probe Acquisition:** Synthesizes stochastic arrays representing near-field aperture phasors ($E_x, E_y$) intercepted over a planar cartesian slice incorporating mechanical measurement noise. The planner unconditionally forces wavelength Nyquist validations ($\le \lambda / 2$) to eliminate spatial aliasing.
+* **Exact Analytical 2D Spectral Transform:** Bypasses basic analytical approximations by invoking a dependency-free explicit mathematical Fourier decomposition matrix integrating the Near-Field arrays over the target $N_\theta \times N_\phi$ grid natively.
+* **Digital Twin Synchronization:** Extends the physical backend FDTD loop by tracking complex frequency-domain state accumulations explicitly at the target Z-plane cut concurrently. Projects the matching FDTD vectors across the unified Spatial-Coordinate system interpolating physical-to-numerical overlaps to derive uncorrupted final 2D RMSE Heatmaps.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -122,3 +125,4 @@ Bridges the M28 RF Abstraction with a formal Spatial Positioning engine to autom
 - [x] Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
 - [x] Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
 - [x] Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
+- [x] Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
