@@ -91,9 +91,12 @@ Bridges the M28 RF Abstraction with a formal Spatial Positioning engine to autom
 
 ## Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
 Solidifies the end-to-end Antenna Metrology framework by uniting a rigorous Plane-Wave Spectral `NF2FF` math engine with a 2D Planar Spatial Scanner abstraction. 
-* **Mock Spatial Probe Acquisition:** Synthesizes stochastic arrays representing near-field aperture phasors ($E_x, E_y$) intercepted over a planar cartesian slice incorporating mechanical measurement noise. The planner unconditionally forces wavelength Nyquist validations ($\le \lambda / 2$) to eliminate spatial aliasing.
-* **Exact Analytical 2D Spectral Transform:** Bypasses basic analytical approximations by invoking a dependency-free explicit mathematical Fourier decomposition matrix integrating the Near-Field arrays over the target $N_\theta \times N_\phi$ grid natively.
-* **Digital Twin Synchronization:** Extends the physical backend FDTD loop by tracking complex frequency-domain state accumulations explicitly at the target Z-plane cut concurrently. Projects the matching FDTD vectors across the unified Spatial-Coordinate system interpolating physical-to-numerical overlaps to derive uncorrupted final 2D RMSE Heatmaps.
+
+## Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
+Transforms the planar scanning metrology module into an advanced **Cylindrical Boundary Envelope ($r, \phi, z$)**.
+* **Cylindrical Modal Math:** Incorporates a rigorous Equivalent Surface Current discrete integration kernel bridging complex fields captured over a rotating radial envelope directly into a uniform spherical Far-Field shell ($N_\theta \times N_\phi$).
+* **FDTD Cartesian to Cylindrical Mapping:** Expands the internal Python/Numba physics kernel (`run_simulation_cyl_nf_cpu`) to dynamically interpolate spatial coordinates across varying physical domains ($X, Y \to \phi, r$) on the fly, eliminating external matrix translation bloat.
+* **Strict Sampling Validation:** The internal logic strictly monitors Nyquist aliasing boundaries across cylindrical arc geometries explicitly ($\Delta s \approx r \Delta\phi \le \lambda / 2$) to reject unsafe mechanical traversal setups prior to mock motor actuation.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -126,3 +129,4 @@ Solidifies the end-to-end Antenna Metrology framework by uniting a rigorous Plan
 - [x] Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
 - [x] Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
 - [x] Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
+- [x] Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
