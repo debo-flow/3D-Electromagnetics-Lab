@@ -85,9 +85,12 @@ Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with
 
 ## Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
 Expands the Hardware Abstraction Layer into a standardized SCPI-driven Vector Network Analyzer (VNA) interface handling complex S-Parameters exclusively.
-* **SCPI Command Translation:** Constructs an internal command handler recognizing formal standard instrument queries (`*IDN?`, `SENS:FREQ:STAR`, `SOUR:POW`) resolving them deterministically within the mock state constraints to mirror real hardware logic.
-* **Complex S-Parameter Extraction & Geometry:** Simulates actual 4-port reactive hardware limits by evaluating explicit complex parameters via modeled RLC trajectories. Outputs strictly mapped $\Gamma$ responses for analytical viewing. 
-* **Analytics & Touchstone Generation:** Implements native VSWR $\frac{1 + |\Gamma|}{1 - |\Gamma|}$, Return Loss calculations, automated resonance mapping, and generates explicit $Z_0$ matched Smith Charts dynamically before enabling standardized `.s2p` Touchstone exports directly from the resulting memory cache.
+
+## Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
+Bridges the M28 RF Abstraction with a formal Spatial Positioning engine to automate full-sphere 3D Antenna Characterization measurements dynamically.
+* **Spatial Scan Execution:** Operators define spherical coordinate ($\theta, \phi$) scan limits. The engine iterates natively over a `MockPositioner` abstraction, demanding physical safety clearances prior to invoking positional translations and simultaneous VNA RF triggers.
+* **Realistic Error Implantation:** Mock datasets are securely demarcated from simulations via embedded stochastic measurement flaws—including Amplitude Gaussian noise, Phase jitter, and strict Positional tracking deviance representing mechanical backlash limits.
+* **Advanced Beam Analytics & Error Mapping:** Reconstructs acquired volumetric datasets into Plotly 3D Cartesian surfaces and explicit 2D E/H-plane cut topologies. Identifies peak Main Lobe directivity, evaluates Half-Power Beamwidth (HPBW), computes Front-to-Back Ratios (FBR), and ultimately overlays the dataset directly onto the M26 Digital Twin to extract continuous 2D Angular RMSE Error Maps.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -118,3 +121,4 @@ Expands the Hardware Abstraction Layer into a standardized SCPI-driven Vector Ne
 - [x] Milestone 26 — Electromagnetic Digital Twin & Experimental Measurement Correlation Laboratory
 - [x] Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
 - [x] Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
+- [x] Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
