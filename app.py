@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 30 — Near-Field Scanning, NF2FF Transformation & Complete Antenna Lab
+Milestone 31 — Cylindrical Near-Field Scanning & NF2FF Transformation Laboratory
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 30 — Near-Field Scanning & NF2FF Transformation Lab")
+st.markdown("### Milestone 31 — Cylindrical Near-Field Scanning & NF2FF Lab")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Cylindrical NF/FF Lab (M31)",
     "Near-Field / Far-Field Lab (M30)",
     "Antenna Characterization Lab (M29)",
     "RF Network Analyzer Laboratory (M28)",
@@ -89,9 +90,9 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
 ])
 
 # Global States
-if 'nf_plan' not in st.session_state: st.session_state.nf_plan = None
-if 'nf_data' not in st.session_state: st.session_state.nf_data = None
-if 'ff_data' not in st.session_state: st.session_state.ff_data = None
+if 'cyl_plan' not in st.session_state: st.session_state.cyl_plan = None
+if 'cyl_data' not in st.session_state: st.session_state.cyl_data = None
+if 'cyl_ff_data' not in st.session_state: st.session_state.cyl_ff_data = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
@@ -173,12 +174,12 @@ def compute_cpml(N, d_pml, delta, step_dt, m=3, R_err=1e-4, alpha_max=0.05):
 b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# UNIFIED FDTD SOLVER (CPU) WITH Z-PLANE PHASOR EXTRACTION
+# UNIFIED FDTD SOLVER (CPU) WITH CYLINDRICAL PHASOR EXTRACTION
 # ============================================================
 @nb.njit(cache=True)
-def run_simulation_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
+def run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
                        ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
-                       freq_hz, z_scan):
+                       freq_hz, R0, z_arr, phi_arr, cx, cy, cz):
 
     Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
@@ -188,11 +189,24 @@ def run_simulation_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x
     psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
-    # Frequency-Domain Phasor Accumulators for Z-plane
-    Ex_phasor = np.zeros((Nx, Ny), dtype=np.complex128)
-    Ey_phasor = np.zeros((Nx, Ny), dtype=np.complex128)
+    Ez_phasor = np.zeros((len(z_arr), len(phi_arr)), dtype=np.complex128)
+    Ephi_phasor = np.zeros((len(z_arr), len(phi_arr)), dtype=np.complex128)
     omega = 2.0 * np.pi * freq_hz
-    accum_steps = steps // 2  # Discard transient startup
+    accum_steps = steps // 2 
+
+    # Precompute Cartesian indices for the cylindrical grid (Nearest neighbor interpolation for speed)
+    i_idx = np.zeros(len(phi_arr), dtype=np.int32)
+    j_idx = np.zeros(len(phi_arr), dtype=np.int32)
+    k_idx = np.zeros(len(z_arr), dtype=np.int32)
+    
+    for p in range(len(phi_arr)):
+        x_pos = R0 * np.cos(phi_arr[p])
+        y_pos = R0 * np.sin(phi_arr[p])
+        i_idx[p] = int(cx + x_pos / dx)
+        j_idx[p] = int(cy + y_pos / dy)
+        
+    for k in range(len(z_arr)):
+        k_idx[k] = int(cz + z_arr[k] / dz)
 
     for n in range(steps):
         t_steps = float(n)
@@ -230,210 +244,229 @@ def run_simulation_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
         # CW Source Feed (Dipole at center)
-        cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
         pulse = math.sin(omega * n * dt)
         for k in range(cz - 5, cz + 6): Ez[cx, cy, k] += pulse
         
-        # Accumulate Steady-State Complex Phasors at Scan Plane
+        # Accumulate Steady-State Complex Phasors at Cylindrical Coordinates
         if n >= steps - accum_steps:
             e_j_wt = np.exp(-1j * omega * n * dt)
-            for i in range(Nx):
-                for j in range(Ny):
-                    Ex_phasor[i,j] += Ex[i, j, z_scan] * e_j_wt
-                    Ey_phasor[i,j] += Ey[i, j, z_scan] * e_j_wt
+            for z_i in range(len(z_arr)):
+                for p_i in range(len(phi_arr)):
+                    ix = i_idx[p_i]; iy = j_idx[p_i]; iz = k_idx[z_i]
+                    
+                    if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
+                        Ez_val = Ez[ix, iy, iz]
+                        Ex_val = Ex[ix, iy, iz]; Ey_val = Ey[ix, iy, iz]
+                        
+                        # Project Cartesian to Cylindrical E_phi
+                        Ephi_val = -Ex_val * np.sin(phi_arr[p_i]) + Ey_val * np.cos(phi_arr[p_i])
+                        
+                        Ez_phasor[z_i, p_i] += Ez_val * e_j_wt
+                        Ephi_phasor[z_i, p_i] += Ephi_val * e_j_wt
 
-    Ex_phasor /= accum_steps
-    Ey_phasor /= accum_steps
-    return Ex_phasor, Ey_phasor
+    Ez_phasor /= accum_steps
+    Ephi_phasor /= accum_steps
+    return Ez_phasor, Ephi_phasor
 
 # ============================================================
-# M30: MOCK PROBE & NF2FF SPECTRAL ENGINE
+# M31: MOCK CYLINDRICAL PROBE & NF2FF SPECTRAL ENGINE
 # ============================================================
-class MockNearFieldProbe:
+class MockCylindricalProbe:
     def __init__(self):
         self.connected = False
         
     def connect(self): self.connected = True
     def disconnect(self): self.connected = False
         
-    def acquire(self, X_grid, Y_grid, z_scan, freq):
-        """Generates analytical 2D near-field pattern simulating an aperture with measurement noise."""
+    def acquire(self, Z_grid, Phi_grid, R0, freq):
+        """Generates analytical 2D cylindrical near-field pattern with spatial measurement noise."""
         k0 = 2 * np.pi * freq / C_LIGHT
-        # Mock a cosine-tapered aperture propagating to z_scan
-        R = np.sqrt(X_grid**2 + Y_grid**2 + z_scan**2)
         
-        ideal_mag = np.exp(-(X_grid**2 + Y_grid**2)/0.005) / (R + 1e-6)
+        # Mocking a dipole radiation pattern sampled on a cylinder
+        R = np.sqrt(R0**2 + Z_grid**2)
+        theta_mock = np.arccos(Z_grid / (R + 1e-12))
+        
+        # Dipole field dominant in theta -> Ez component primarily
+        ideal_mag = np.abs(np.sin(theta_mock)) / (R + 1e-6)
         ideal_phase = -k0 * R
         
         np.random.seed(int(time.time()*1000)%10000)
-        noise_m = np.random.normal(0, 0.02, X_grid.shape)
-        noise_p = np.random.normal(0, 0.05, X_grid.shape)
+        noise_m = np.random.normal(0, 0.02, Z_grid.shape)
+        noise_p = np.random.normal(0, 0.05, Z_grid.shape)
         
-        Ex_mock = (ideal_mag + noise_m) * np.exp(1j * (ideal_phase + noise_p))
-        Ey_mock = 0.05 * Ex_mock # Cross-polarization component
-        return Ex_mock, Ey_mock
+        Ez_mock = (ideal_mag + noise_m) * np.exp(1j * (ideal_phase + noise_p))
+        Ephi_mock = 0.02 * Ez_mock # Cross-polarization component
+        return Ez_mock, Ephi_mock
 
-def compute_far_field_direct(Ex_nf, Ey_nf, x_arr, y_arr, freq, thetas, phis):
-    """Direct, exact integration of Plane Wave Spectrum to Far-Field."""
+def compute_far_field_cylindrical(Ez_nf, Ephi_nf, z_arr, phi_arr, R0, freq, thetas, phis):
+    """Direct Plane-Wave integration of equivalent currents on a Cylindrical Boundary."""
     k0 = 2 * np.pi * freq / C_LIGHT
-    X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
-    dx_scan = x_arr[1] - x_arr[0] if len(x_arr) > 1 else 1.0
-    dy_scan = y_arr[1] - y_arr[0] if len(y_arr) > 1 else 1.0
+    Z, PHI_P = np.meshgrid(z_arr, phi_arr, indexing='ij')
+    dz_scan = z_arr[1] - z_arr[0] if len(z_arr) > 1 else 1.0
+    dphi_scan = phi_arr[1] - phi_arr[0] if len(phi_arr) > 1 else 1.0
     
     THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
     
-    # Spectral wave vectors
-    kx = k0 * np.sin(THETA) * np.cos(PHI)
-    ky = k0 * np.sin(THETA) * np.sin(PHI)
+    # Broadcast Arrays for vectorized 2D spatial integration: Z_b: (Nz, Np, 1, 1), THETA_b: (1, 1, Nt, Np)
+    Z_b = Z[:, :, None, None]; PHI_P_b = PHI_P[:, :, None, None]
+    THETA_b = THETA[None, None, :, :]; PHI_b = PHI[None, None, :, :]
     
-    # Broadcast Arrays for vectorized 2D spatial integration across all angular bounds
-    # X_b: (Nx, Ny, 1, 1), kx_b: (1, 1, Nt, Np)
-    X_b = X[:, :, None, None]; Y_b = Y[:, :, None, None]
-    kx_b = kx[None, None, :, :]; ky_b = ky[None, None, :, :]
+    # Free-Space phase factor for cylindrical coordinate transform
+    # r' \cdot r_hat = R0 * sin(theta) * cos(phi - phi') + z' * cos(theta)
+    phase_factor = R0 * np.sin(THETA_b) * np.cos(PHI_b - PHI_P_b) + Z_b * np.cos(THETA_b)
+    kernel = np.exp(1j * k0 * phase_factor) * R0 * dphi_scan * dz_scan
     
-    kernel = np.exp(1j * (kx_b * X_b + ky_b * Y_b))
+    # Equivalent surface currents approximation (assuming outward propagating waves H_phi ~ Ez/Z0, H_z ~ -Ephi/Z0)
+    Jz = Ez_nf / Z_0
+    Jphi = Ephi_nf / Z_0
     
-    Fx = np.sum(Ex_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_scan * dy_scan
-    Fy = np.sum(Ey_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_scan * dy_scan
+    # Magnetic Vector Potential integral approximation
+    Az = np.sum(Jz[:, :, None, None] * kernel, axis=(0, 1))
+    Aphi = np.sum(Jphi[:, :, None, None] * kernel, axis=(0, 1))
     
-    E_theta = (Fx * np.cos(PHI) + Fy * np.sin(PHI)) * np.cos(THETA)
-    E_phi = -Fx * np.sin(PHI) + Fy * np.cos(PHI)
+    E_theta = -1j * k0 * Z_0 * (Az * np.sin(THETA))
+    E_phi = -1j * k0 * Z_0 * Aphi
     
     return E_theta, E_phi
 
-if 'nf_probe' not in st.session_state: st.session_state.nf_probe = MockNearFieldProbe()
+if 'cyl_probe' not in st.session_state: st.session_state.cyl_probe = MockCylindricalProbe()
 
 # ============================================================
-# M30: NEAR-FIELD / FAR-FIELD LABORATORY UI
+# M31: CYLINDRICAL NEAR-FIELD / FAR-FIELD LABORATORY UI
 # ============================================================
-if exp_mode == "Near-Field / Far-Field Lab (M30)":
-    nf_probe = st.session_state.nf_probe
+if exp_mode == "Cylindrical NF/FF Lab (M31)":
+    cyl_probe = st.session_state.cyl_probe
     
     st.sidebar.header("3. PROBE & INSTRUMENTATION")
     c1, c2 = st.sidebar.columns(2)
-    if c1.button("Connect Probe"): nf_probe.connect()
-    if c2.button("Disconnect Probe"): nf_probe.disconnect()
-    st.sidebar.metric("Probe Status", "CONNECTED" if nf_probe.connected else "OFFLINE")
+    if c1.button("Connect Probe"): cyl_probe.connect()
+    if c2.button("Disconnect Probe"): cyl_probe.disconnect()
+    st.sidebar.metric("Probe Status", "CONNECTED" if cyl_probe.connected else "OFFLINE")
 
-    st.markdown("### 🧲 Automated Near-Field Scanning & NF2FF Translation")
-    st.info("The M30 framework coordinates 2D spatial probe sweeps across an established aperture boundary. It mathematically translates the resulting complex Near-Field (NF) spatial phasors into the 3D Far-Field (FF) Domain using analytical Plane Wave Spectrum arrays without artificial extrapolation.")
+    st.markdown("### 🛢️ Cylindrical Near-Field Scanning & NF2FF Translation")
+    st.info("The M31 framework maps 2D spatial probe sweeps across a bounding cylindrical manifold ($r, \phi, z$). It extracts complex Near-Field spatial phasors, validates Nyquist arc-length limits, and translates them into the Far-Field Domain using rigorous physical equivalence currents.")
 
-    t_plan, t_acq, t_nf2ff, t_ff, t_dt = st.tabs(["1. Scan Planner", "2. NF Acquisition", "3. NF2FF Transform", "4. Far-Field Patterns", "5. Digital Twin Correlation"])
+    t_plan, t_acq, t_nf2ff, t_ff, t_dt = st.tabs(["1. Cylinder Planner", "2. NF Acquisition", "3. Cylindrical NF2FF", "4. Far-Field Patterns", "5. Digital Twin Correlation"])
 
     with t_plan:
-        st.markdown("#### Planar Near-Field Scan Setup")
-        with st.form("nf_plan_form"):
+        st.markdown("#### Cylindrical Geometry Scan Setup")
+        with st.form("cyl_plan_form"):
             cc1, cc2, cc3 = st.columns(3)
-            x_min = cc1.number_input("X Min (m)", -0.5, 0.0, -0.2, 0.05)
-            x_max = cc2.number_input("X Max (m)", 0.0, 0.5, 0.2, 0.05)
-            x_step = cc3.number_input("X Step (m)", 0.001, 0.1, 0.02, 0.005)
+            z_min = cc1.number_input("Z Min (m)", -0.5, 0.0, -0.2, 0.05)
+            z_max = cc2.number_input("Z Max (m)", 0.0, 0.5, 0.2, 0.05)
+            z_step = cc3.number_input("Z Step (m)", 0.001, 0.1, 0.02, 0.005)
             
-            y_min = cc1.number_input("Y Min (m)", -0.5, 0.0, -0.2, 0.05)
-            y_max = cc2.number_input("Y Max (m)", 0.0, 0.5, 0.2, 0.05)
-            y_step = cc3.number_input("Y Step (m)", 0.001, 0.1, 0.02, 0.005)
+            p_start = cc1.number_input("Phi Start (°)", 0.0, 360.0, 0.0)
+            p_stop = cc2.number_input("Phi Stop (°)", 0.0, 360.0, 350.0) # Avoid double counting 360
+            p_step = cc3.number_input("Phi Step (°)", 1.0, 45.0, 10.0)
             
-            z_dist = st.number_input("Measurement Plane Distance Z (m)", 0.01, 2.0, 0.1, 0.01)
+            r_dist = st.number_input("Cylinder Radius R0 (m)", 0.01, 2.0, 0.1, 0.01)
             freq_hz = st.number_input("Operating Frequency (GHz)", 0.1, 40.0, 2.4, 0.1) * 1e9
+            
+            scan_order = st.selectbox("Scan Order Optimization", ["φ-major (Rotate then Step Z)", "z-major (Step Z then Rotate)"])
             
             submitted = st.form_submit_button("Validate Scan Plan")
             if submitted:
                 wl = C_LIGHT / freq_hz
                 max_step = wl / 2.0
                 
-                if x_step > max_step or y_step > max_step:
-                    st.error(f"Sampling Violation: Step sizes must be ≤ λ/2 ({max_step*1000:.1f} mm) to prevent spectral aliasing!")
-                elif x_min >= x_max or y_min >= y_max:
+                # Cylindrical Arc length sampling: ds = r * d(phi)
+                arc_step = r_dist * np.deg2rad(p_step)
+                
+                if z_step > max_step or arc_step > max_step:
+                    st.error(f"Sampling Violation: Both Z-Step ({z_step*1000:.1f} mm) and Arc-Step ({arc_step*1000:.1f} mm) must be ≤ λ/2 ({max_step*1000:.1f} mm) to prevent spectral aliasing!")
+                elif z_min >= z_max or p_start >= p_stop:
                     st.error("Invalid spatial bounds.")
                 else:
-                    x_arr = np.arange(x_min, x_max + x_step, x_step)
-                    y_arr = np.arange(y_min, y_max + y_step, y_step)
-                    st.session_state.nf_plan = {
-                        "x_arr": x_arr, "y_arr": y_arr, "z": z_dist, 
-                        "freq": freq_hz, "pts": len(x_arr)*len(y_arr)
+                    z_arr = np.arange(z_min, z_max + z_step, z_step)
+                    p_arr = np.deg2rad(np.arange(p_start, p_stop + p_step, p_step))
+                    st.session_state.cyl_plan = {
+                        "z_arr": z_arr, "p_arr": p_arr, "r": r_dist, 
+                        "freq": freq_hz, "pts": len(z_arr)*len(p_arr), "order": scan_order
                     }
-                    st.success(f"Scan Validated. Total Grid Points: {len(x_arr)*len(y_arr)}. Required Wavelength resolution satisfied (λ = {wl*1000:.1f} mm).")
+                    st.success(f"Scan Validated. Total Grid Points: {len(z_arr)*len(p_arr)}. Required Wavelength resolution satisfied (λ = {wl*1000:.1f} mm).")
 
     with t_acq:
-        if st.session_state.nf_plan is None: st.warning("Validate a Scan Plan first.")
-        elif not nf_probe.connected: st.error("Probe Offline. Please Connect Probe.")
+        if st.session_state.cyl_plan is None: st.warning("Validate a Scan Plan first.")
+        elif not cyl_probe.connected: st.error("Probe Offline. Please Connect Probe.")
         else:
-            plan = st.session_state.nf_plan
+            plan = st.session_state.cyl_plan
             st.metric("Total Measurement Points", plan['pts'])
             
-            if st.button("RUN NEAR-FIELD ACQUISITION", type="primary"):
+            if st.button("RUN CYLINDRICAL NF ACQUISITION", type="primary"):
                 st.warning("⚠️ MOCK NEAR-FIELD DATA ACQUISITION IN PROGRESS...")
                 pb = st.progress(0)
                 
-                X_grid, Y_grid = np.meshgrid(plan["x_arr"], plan["y_arr"], indexing='ij')
+                Z_grid, Phi_grid = np.meshgrid(plan["z_arr"], plan["p_arr"], indexing='ij')
                 
-                # Mock acquisition delay simulation
                 time.sleep(0.5)
-                Ex_mock, Ey_mock = nf_probe.acquire(X_grid, Y_grid, plan["z"], plan["freq"])
+                Ez_mock, Ephi_mock = cyl_probe.acquire(Z_grid, Phi_grid, plan["r"], plan["freq"])
                 pb.progress(1.0)
                 
-                st.session_state.nf_data = {
-                    "Ex": Ex_mock, "Ey": Ey_mock, "X": X_grid, "Y": Y_grid, "source": "MOCK DATA"
+                st.session_state.cyl_data = {
+                    "Ez": Ez_mock, "Ephi": Ephi_mock, "Z": Z_grid, "Phi": Phi_grid, "source": "MOCK CYLINDRICAL DATA"
                 }
-                st.success("2D Near-Field Maps successfully acquired and logged.")
+                st.success("2D Cylindrical Near-Field Maps successfully acquired and logged.")
 
-        if st.session_state.nf_data is not None:
-            nf = st.session_state.nf_data
-            st.markdown("##### 2D Phase & Magnitude Visualizations")
+        if st.session_state.cyl_data is not None:
+            nf = st.session_state.cyl_data
+            st.markdown("##### 2D Phase & Magnitude Visualizations (Unwrapped Cylinder: $\\phi \\times z$)")
             cf1, cf2 = st.columns(2)
             
-            mag_db = 20 * np.log10(np.abs(nf["Ex"]) + 1e-12)
-            phase = np.angle(nf["Ex"])
+            mag_db = 20 * np.log10(np.abs(nf["Ez"]) + 1e-12)
+            phase = np.angle(nf["Ez"])
             
-            fig_m = go.Figure(go.Heatmap(z=mag_db.T, x=plan['x_arr'], y=plan['y_arr'], colorscale='Viridis', colorbar=dict(title="dBV/m")))
-            fig_m.update_layout(title="Measured E_x Magnitude (dB)", xaxis_title="X (m)", yaxis_title="Y (m)", width=400, height=400)
+            fig_m = go.Figure(go.Heatmap(z=mag_db.T, x=plan['z_arr'], y=np.rad2deg(plan['p_arr']), colorscale='Viridis', colorbar=dict(title="dBV/m")))
+            fig_m.update_layout(title="Measured E_z Magnitude (dB)", xaxis_title="Z (m)", yaxis_title="Phi (°)", width=400, height=400)
             cf1.plotly_chart(fig_m)
             
-            fig_p = go.Figure(go.Heatmap(z=phase.T, x=plan['x_arr'], y=plan['y_arr'], colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
-            fig_p.update_layout(title="Measured E_x Phase (Wrapped)", xaxis_title="X (m)", yaxis_title="Y (m)", width=400, height=400)
+            fig_p = go.Figure(go.Heatmap(z=phase.T, x=plan['z_arr'], y=np.rad2deg(plan['p_arr']), colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
+            fig_p.update_layout(title="Measured E_z Phase (Wrapped)", xaxis_title="Z (m)", yaxis_title="Phi (°)", width=400, height=400)
             cf2.plotly_chart(fig_p)
 
     with t_nf2ff:
-        if st.session_state.nf_data is None: st.warning("Acquire Near-Field data first.")
+        if st.session_state.cyl_data is None: st.warning("Acquire Near-Field data first.")
         else:
-            plan = st.session_state.nf_plan
-            nf = st.session_state.nf_data
+            plan = st.session_state.cyl_plan
+            nf = st.session_state.cyl_data
             
-            st.markdown("#### Planar Spectral NF2FF Transform")
-            st.info("Uses a precise 2D Discrete Plane Wave Spectral decomposition. Transforms the measured spatial phasors across an exact hemispherical $N_{\\theta} \\times N_{\\phi}$ grid without interpolative approximations.")
+            st.markdown("#### Cylindrical Spectral NF2FF Transform")
+            st.info("Transforms the measured spatial phasors across the bounding cylinder into the 3D Far-Field Domain using mathematically rigorous Surface Equivalence Currents ($M_s, J_s$) over $N_{\\theta} \\times N_{\\phi}$.")
             
             c_r1, c_r2 = st.columns(2)
             res_t = c_r1.number_input("Theta Resolution (°)", 1.0, 10.0, 2.0)
             res_p = c_r2.number_input("Phi Resolution (°)", 1.0, 10.0, 5.0)
             
             if st.button("Execute Mathematical NF2FF Integration", type="primary"):
-                with st.spinner("Integrating Plane Wave Spectrum components..."):
-                    thetas = np.deg2rad(np.arange(0, 90 + res_t, res_t))
+                with st.spinner("Integrating Equivalent Currents..."):
+                    thetas = np.deg2rad(np.arange(0, 180 + res_t, res_t))
                     phis = np.deg2rad(np.arange(0, 360, res_p))
                     
-                    E_th, E_ph = compute_far_field_direct(nf["Ex"], nf["Ey"], plan["x_arr"], plan["y_arr"], plan["freq"], thetas, phis)
+                    E_th, E_ph = compute_far_field_cylindrical(nf["Ez"], nf["Ephi"], plan["z_arr"], plan["p_arr"], plan["r"], plan["freq"], thetas, phis)
                     
                     E_tot_mag = np.sqrt(np.abs(E_th)**2 + np.abs(E_ph)**2)
                     E_tot_db = 20 * np.log10(E_tot_mag + 1e-12)
                     E_tot_norm = E_tot_db - np.max(E_tot_db)
                     
-                    st.session_state.ff_data = {
+                    st.session_state.cyl_ff_data = {
                         "theta": thetas, "phi": phis, "E_norm": E_tot_norm, "E_th": E_th, "E_ph": E_ph, "source": "NF2FF TRANSFORM (MOCK)"
                     }
-                st.success("Far-Field Spatial Transformation Complete. Proceed to Pattern Analytics.")
+                st.success("Cylindrical Far-Field Spatial Transformation Complete.")
 
     with t_ff:
-        if st.session_state.ff_data is None: st.info("Execute NF2FF Transform first.")
+        if st.session_state.cyl_ff_data is None: st.info("Execute NF2FF Transform first.")
         else:
-            ff = st.session_state.ff_data
+            ff = st.session_state.cyl_ff_data
             st.markdown("#### 3D Far-Field Patterns & Analytics")
             st.warning(f"**SOURCE:** `{ff['source']}`")
             
             T, P = np.meshgrid(ff["theta"], ff["phi"], indexing='ij')
-            R = ff["E_norm"] - np.min(ff["E_norm"])
+            # Clip negative dB for spherical visualization radius bounding
+            R = np.maximum(ff["E_norm"] + 40, 0) 
             X = R * np.sin(T) * np.cos(P); Y = R * np.sin(T) * np.sin(P); Z = R * np.cos(T)
             
             fig_3d = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, surfacecolor=ff["E_norm"], colorscale='Jet', colorbar=dict(title="dB"))])
-            fig_3d.update_layout(title="Transformed 3D Far-Field Hemisphere", height=500)
+            fig_3d.update_layout(title="Transformed 3D Far-Field (Cylindrical Origin)", height=500)
             
             cc1, cc2 = st.columns([2, 1])
             cc1.plotly_chart(fig_3d, use_container_width=True)
@@ -444,53 +477,33 @@ if exp_mode == "Near-Field / Far-Field Lab (M30)":
                 peak_t = np.rad2deg(ff["theta"][idx_t])
                 peak_p = np.rad2deg(ff["phi"][idx_p])
                 
-                # HPBW Extraction
                 e_cut = ff["E_norm"][:, idx_p]
                 hp_pts = np.where(e_cut >= -3.0)[0]
-                hpbw = np.rad2deg(ff["theta"][hp_pts[-1]]) * 2 if len(hp_pts) > 0 else 0.0 # Assumed symmetric about zenith
+                hpbw = np.rad2deg(ff["theta"][hp_pts[-1]]) - np.rad2deg(ff["theta"][hp_pts[0]]) if len(hp_pts) > 0 else 0.0 
                 
                 st.metric("Main-Lobe Peak Direction", f"θ={peak_t:.1f}°, φ={peak_p:.1f}°")
-                st.metric("Estimated HPBW", f"{hpbw:.1f}°")
+                st.metric("Estimated HPBW (E-Plane)", f"{hpbw:.1f}°")
                 st.metric("Peak Norm Magnitude", "0.0 dB (Reference)")
 
     with t_dt:
-        if st.session_state.ff_data is None: st.info("Transform Far-Field patterns first.")
+        if st.session_state.cyl_ff_data is None: st.info("Transform Far-Field patterns first.")
         else:
-            plan = st.session_state.nf_plan
-            ff = st.session_state.ff_data
+            plan = st.session_state.cyl_plan
+            ff = st.session_state.cyl_ff_data
             
-            st.markdown("#### 🔄 Digital Twin Correlation (FDTD vs MOCK NF2FF)")
-            st.info("The Digital Twin automatically computes an explicit complex frequency-domain FDTD run, captures the matching spatial Z-plane phasors natively, and runs the parallel NF2FF logic to output absolute physical Discrepancy Error margins.")
+            st.markdown("#### 🔄 Digital Twin Correlation (FDTD vs MOCK CYLINDRICAL NF2FF)")
+            st.info("The Digital Twin accurately maps the Cartesian FDTD grid onto the Cylindrical Mock Measurement bounding shell. It directly captures the complex Phasors during the FDTD run, bypassing interpolation artifacts, and integrates the numerical NF2FF independently to compare against the physical Mock.")
             
-            if st.button("Correlate Simulation vs Measurements", type="primary"):
+            if st.button("Correlate Cylindrical Simulation vs Measurements", type="primary"):
                 progress_bar = st.progress(0)
-                
-                # Align physical coordinates to FDTD grid
-                z_scan_idx = cz + int(plan["z"] / dz)
-                if z_scan_idx >= Nz: z_scan_idx = Nz - 1
-                
                 reset_materials()
-                # Run specially recorded Z-Plane FDTD
-                Ex_sim, Ey_sim = run_simulation_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, plan["freq"], z_scan_idx)
+                
+                # Execute FDTD and explicitly capture Cylindrical (Z, Phi) boundary phasors natively
+                Ez_sim, Ephi_sim = run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, plan["freq"], plan["r"], plan["z_arr"], plan["p_arr"], cx, cy, cz)
                 progress_bar.progress(0.5)
                 
-                # Spatial interpolation from FDTD Grid to User's Mock Scan Grid to ensure rigorous parity
-                fdtd_x = (np.arange(Nx) - cx) * dx
-                fdtd_y = (np.arange(Ny) - cy) * dy
-                
-                # Safe nearest neighbor for interpolation to avoid external scipy dependencies
-                sim_Ex_interp = np.zeros_like(st.session_state.nf_data["Ex"], dtype=complex)
-                sim_Ey_interp = np.zeros_like(st.session_state.nf_data["Ey"], dtype=complex)
-                
-                for i, x in enumerate(plan["x_arr"]):
-                    for j, y in enumerate(plan["y_arr"]):
-                        ix = np.argmin(np.abs(fdtd_x - x))
-                        iy = np.argmin(np.abs(fdtd_y - y))
-                        sim_Ex_interp[i, j] = Ex_sim[ix, iy]
-                        sim_Ey_interp[i, j] = Ey_sim[ix, iy]
-                
-                # FDTD NF2FF
-                E_th_sim, E_ph_sim = compute_far_field_direct(sim_Ex_interp, sim_Ey_interp, plan["x_arr"], plan["y_arr"], plan["freq"], ff["theta"], ff["phi"])
+                # FDTD Cylindrical NF2FF
+                E_th_sim, E_ph_sim = compute_far_field_cylindrical(Ez_sim, Ephi_sim, plan["z_arr"], plan["p_arr"], plan["r"], plan["freq"], ff["theta"], ff["phi"])
                 
                 E_tot_sim_db = 20 * np.log10(np.sqrt(np.abs(E_th_sim)**2 + np.abs(E_ph_sim)**2) + 1e-12)
                 E_tot_sim_norm = E_tot_sim_db - np.max(E_tot_sim_db)
@@ -498,10 +511,9 @@ if exp_mode == "Near-Field / Far-Field Lab (M30)":
                 # Correlation
                 error_map = np.abs(E_tot_sim_norm - ff["E_norm"])
                 rmse = np.sqrt(np.mean(error_map**2))
-                
                 progress_bar.progress(1.0)
                 
-                st.metric("Far-Field Pattern RMSE (Simulation vs MOCK)", f"{rmse:.3f} dB")
+                st.metric("Cylindrical Far-Field Pattern RMSE (Simulation vs MOCK)", f"{rmse:.3f} dB")
                 
                 fig_err = go.Figure(data=go.Heatmap(z=error_map.T, x=np.rad2deg(ff["theta"]), y=np.rad2deg(ff["phi"]), colorscale='Reds', colorbar=dict(title="Absolute Error (dB)")))
                 fig_err.update_layout(title="Angular Far-Field Error Map (SIM vs MOCK)", xaxis_title="Theta (°)", yaxis_title="Phi (°)")
@@ -509,10 +521,10 @@ if exp_mode == "Near-Field / Far-Field Lab (M30)":
                 
                 report = {
                     "Analysis_ID": str(uuid.uuid4()), "Timestamp": datetime.datetime.now().isoformat(),
-                    "Frequency": plan["freq"], "Sampling_Grid": f"{plan['pts']} points",
+                    "Data_Source": "MOCK_CYLINDRICAL_MEASUREMENT", "Frequency": plan["freq"],
                     "RMSE_dB": float(rmse), "Mock_Peak_Direction": {"theta": float(np.rad2deg(ff["theta"][np.unravel_index(np.argmax(ff["E_norm"]), ff["E_norm"].shape)[0]]))}
                 }
-                st.download_button("Export Final Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="nf2ff_characterization.json", mime="application/json")
+                st.download_button("Export Final Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="cyl_nf2ff_characterization.json", mime="application/json")
 
-elif exp_mode not in ["Near-Field / Far-Field Lab (M30)"]:
-    st.info("Select 'Near-Field / Far-Field Lab (M30)' to configure planar scanning and NF2FF spectral limits.")
+elif exp_mode not in ["Cylindrical NF/FF Lab (M31)", "Near-Field / Far-Field Lab (M30)"]:
+    st.info("Select 'Cylindrical NF/FF Lab (M31)' to configure cylindrical boundary scanning and NF2FF spectral limits.")
