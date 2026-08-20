@@ -94,9 +94,12 @@ Solidifies the end-to-end Antenna Metrology framework by uniting a rigorous Plan
 
 ## Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
 Transforms the planar scanning metrology module into an advanced **Cylindrical Boundary Envelope ($r, \phi, z$)**.
-* **Cylindrical Modal Math:** Incorporates a rigorous Equivalent Surface Current discrete integration kernel bridging complex fields captured over a rotating radial envelope directly into a uniform spherical Far-Field shell ($N_\theta \times N_\phi$).
-* **FDTD Cartesian to Cylindrical Mapping:** Expands the internal Python/Numba physics kernel (`run_simulation_cyl_nf_cpu`) to dynamically interpolate spatial coordinates across varying physical domains ($X, Y \to \phi, r$) on the fly, eliminating external matrix translation bloat.
-* **Strict Sampling Validation:** The internal logic strictly monitors Nyquist aliasing boundaries across cylindrical arc geometries explicitly ($\Delta s \approx r \Delta\phi \le \lambda / 2$) to reject unsafe mechanical traversal setups prior to mock motor actuation.
+
+## Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
+Upgrades the Metrology engine to execute complete **Spherical Boundary Acquisition ($r, \theta, \phi$)** sequences, avoiding coordinate singularities (Pole overlapping).
+* **Spherical Modal Integration:** The mathematical `NF2FF` engine leverages rigorous $r^2 \sin(\theta) d\theta d\phi$ weighting, actively filtering duplicate boundary samples overlapping at the Zenith/Nadir poles ($\theta=0, \pi$) naturally to extract pristine, artifact-free Far-Field radiation surfaces.
+* **Ludwig-3 Polarization Diagnostics:** Beyond magnitude, the transform decomposes extracted phasors ($E_\theta, E_\phi$) into formal Co-Polarized ($E_{co}$) and Cross-Polarized ($E_{cross}$) analytical cuts natively, yielding explicit system isolation ratios mapped across $2D$ $\theta \times \phi$ grids.
+* **Digital Twin Parity Projection:** A parallelized internal simulation array bounds the exact spherical $(r, \theta, \phi)$ shell natively during the FDTD computational sweep, isolating and accumulating matching boundary phasors iteratively without external NumPy interpolation bloat for precise $L^2$ error comparisons.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -130,3 +133,4 @@ Transforms the planar scanning metrology module into an advanced **Cylindrical B
 - [x] Milestone 29 — Automated Antenna Characterization & 3D Radiation-Pattern Measurement Framework
 - [x] Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
 - [x] Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
+- [x] Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
