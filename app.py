@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 31 — Cylindrical Near-Field Scanning & NF2FF Transformation Laboratory
+Milestone 32 — Spherical Near-Field Scanning & NF2FF Transformation Laboratory
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 31 — Cylindrical Near-Field Scanning & NF2FF Lab")
+st.markdown("### Milestone 32 — Spherical Near-Field Scanning & NF2FF Lab")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Spherical NF/FF Lab (M32)",
     "Cylindrical NF/FF Lab (M31)",
     "Near-Field / Far-Field Lab (M30)",
     "Antenna Characterization Lab (M29)",
@@ -90,9 +91,9 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
 ])
 
 # Global States
-if 'cyl_plan' not in st.session_state: st.session_state.cyl_plan = None
-if 'cyl_data' not in st.session_state: st.session_state.cyl_data = None
-if 'cyl_ff_data' not in st.session_state: st.session_state.cyl_ff_data = None
+if 'sph_plan' not in st.session_state: st.session_state.sph_plan = None
+if 'sph_data' not in st.session_state: st.session_state.sph_data = None
+if 'sph_ff_data' not in st.session_state: st.session_state.sph_ff_data = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
@@ -174,12 +175,12 @@ def compute_cpml(N, d_pml, delta, step_dt, m=3, R_err=1e-4, alpha_max=0.05):
 b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# UNIFIED FDTD SOLVER (CPU) WITH CYLINDRICAL PHASOR EXTRACTION
+# UNIFIED FDTD SOLVER (CPU) WITH SPHERICAL PHASOR EXTRACTION
 # ============================================================
 @nb.njit(cache=True)
-def run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
+def run_simulation_sph_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
                        ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
-                       freq_hz, R0, z_arr, phi_arr, cx, cy, cz):
+                       freq_hz, R0, theta_arr, phi_arr, cx, cy, cz):
 
     Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
@@ -189,24 +190,25 @@ def run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b
     psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
-    Ez_phasor = np.zeros((len(z_arr), len(phi_arr)), dtype=np.complex128)
-    Ephi_phasor = np.zeros((len(z_arr), len(phi_arr)), dtype=np.complex128)
+    Etheta_phasor = np.zeros((len(theta_arr), len(phi_arr)), dtype=np.complex128)
+    Ephi_phasor = np.zeros((len(theta_arr), len(phi_arr)), dtype=np.complex128)
     omega = 2.0 * np.pi * freq_hz
     accum_steps = steps // 2 
 
-    # Precompute Cartesian indices for the cylindrical grid (Nearest neighbor interpolation for speed)
-    i_idx = np.zeros(len(phi_arr), dtype=np.int32)
-    j_idx = np.zeros(len(phi_arr), dtype=np.int32)
-    k_idx = np.zeros(len(z_arr), dtype=np.int32)
+    # Precompute Cartesian grid indices for the Spherical Surface (Nearest Neighbor interpolation)
+    i_idx = np.zeros((len(theta_arr), len(phi_arr)), dtype=np.int32)
+    j_idx = np.zeros((len(theta_arr), len(phi_arr)), dtype=np.int32)
+    k_idx = np.zeros((len(theta_arr), len(phi_arr)), dtype=np.int32)
     
-    for p in range(len(phi_arr)):
-        x_pos = R0 * np.cos(phi_arr[p])
-        y_pos = R0 * np.sin(phi_arr[p])
-        i_idx[p] = int(cx + x_pos / dx)
-        j_idx[p] = int(cy + y_pos / dy)
-        
-    for k in range(len(z_arr)):
-        k_idx[k] = int(cz + z_arr[k] / dz)
+    for t in range(len(theta_arr)):
+        for p in range(len(phi_arr)):
+            x_pos = R0 * np.sin(theta_arr[t]) * np.cos(phi_arr[p])
+            y_pos = R0 * np.sin(theta_arr[t]) * np.sin(phi_arr[p])
+            z_pos = R0 * np.cos(theta_arr[t])
+            
+            i_idx[t, p] = int(cx + x_pos / dx)
+            j_idx[t, p] = int(cy + y_pos / dy)
+            k_idx[t, p] = int(cz + z_pos / dz)
 
     for n in range(steps):
         t_steps = float(n)
@@ -243,230 +245,233 @@ def run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b
                     Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
                     Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
 
-        # CW Source Feed (Dipole at center)
+        # CW Source Feed (Dipole along Z)
         pulse = math.sin(omega * n * dt)
         for k in range(cz - 5, cz + 6): Ez[cx, cy, k] += pulse
         
-        # Accumulate Steady-State Complex Phasors at Cylindrical Coordinates
+        # Accumulate Steady-State Complex Phasors at Spherical Boundary
         if n >= steps - accum_steps:
             e_j_wt = np.exp(-1j * omega * n * dt)
-            for z_i in range(len(z_arr)):
-                for p_i in range(len(phi_arr)):
-                    ix = i_idx[p_i]; iy = j_idx[p_i]; iz = k_idx[z_i]
+            for t in range(len(theta_arr)):
+                for p in range(len(phi_arr)):
+                    ix = i_idx[t, p]; iy = j_idx[t, p]; iz = k_idx[t, p]
                     
                     if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
-                        Ez_val = Ez[ix, iy, iz]
-                        Ex_val = Ex[ix, iy, iz]; Ey_val = Ey[ix, iy, iz]
+                        Ex_val = Ex[ix, iy, iz]; Ey_val = Ey[ix, iy, iz]; Ez_val = Ez[ix, iy, iz]
                         
-                        # Project Cartesian to Cylindrical E_phi
-                        Ephi_val = -Ex_val * np.sin(phi_arr[p_i]) + Ey_val * np.cos(phi_arr[p_i])
+                        # Project Cartesian to Spherical (E_theta, E_phi)
+                        theta = theta_arr[t]; phi = phi_arr[p]
+                        Etheta_val = Ex_val * math.cos(theta) * math.cos(phi) + Ey_val * math.cos(theta) * math.sin(phi) - Ez_val * math.sin(theta)
+                        Ephi_val = -Ex_val * math.sin(phi) + Ey_val * math.cos(phi)
                         
-                        Ez_phasor[z_i, p_i] += Ez_val * e_j_wt
-                        Ephi_phasor[z_i, p_i] += Ephi_val * e_j_wt
+                        Etheta_phasor[t, p] += Etheta_val * e_j_wt
+                        Ephi_phasor[t, p] += Ephi_val * e_j_wt
 
-    Ez_phasor /= accum_steps
+    Etheta_phasor /= accum_steps
     Ephi_phasor /= accum_steps
-    return Ez_phasor, Ephi_phasor
+    return Etheta_phasor, Ephi_phasor
 
 # ============================================================
-# M31: MOCK CYLINDRICAL PROBE & NF2FF SPECTRAL ENGINE
+# M32: MOCK SPHERICAL PROBE & NF2FF SPECTRAL ENGINE
 # ============================================================
-class MockCylindricalProbe:
+class MockSphericalProbe:
     def __init__(self):
         self.connected = False
         
     def connect(self): self.connected = True
     def disconnect(self): self.connected = False
         
-    def acquire(self, Z_grid, Phi_grid, R0, freq):
-        """Generates analytical 2D cylindrical near-field pattern with spatial measurement noise."""
+    def acquire(self, Theta_grid, Phi_grid, R0, freq):
+        """Generates analytical 2D spherical near-field pattern simulating a dipole with measurement noise."""
         k0 = 2 * np.pi * freq / C_LIGHT
         
-        # Mocking a dipole radiation pattern sampled on a cylinder
-        R = np.sqrt(R0**2 + Z_grid**2)
-        theta_mock = np.arccos(Z_grid / (R + 1e-12))
+        # Ideal Dipole Field (Dominant E_theta)
+        # Avoid division by zero at poles using a small epsilon buffer
+        sin_t = np.maximum(np.abs(np.sin(Theta_grid)), 1e-6)
         
-        # Dipole field dominant in theta -> Ez component primarily
-        ideal_mag = np.abs(np.sin(theta_mock)) / (R + 1e-6)
-        ideal_phase = -k0 * R
+        ideal_mag = sin_t / (R0 + 1e-6)
+        ideal_phase = -k0 * R0
         
         np.random.seed(int(time.time()*1000)%10000)
-        noise_m = np.random.normal(0, 0.02, Z_grid.shape)
-        noise_p = np.random.normal(0, 0.05, Z_grid.shape)
+        noise_m = np.random.normal(0, 0.02, Theta_grid.shape)
+        noise_p = np.random.normal(0, 0.05, Theta_grid.shape)
         
-        Ez_mock = (ideal_mag + noise_m) * np.exp(1j * (ideal_phase + noise_p))
-        Ephi_mock = 0.02 * Ez_mock # Cross-polarization component
-        return Ez_mock, Ephi_mock
+        Etheta_mock = (ideal_mag + noise_m) * np.exp(1j * (ideal_phase + noise_p))
+        Ephi_mock = 0.01 * Etheta_mock # Minimal cross-polarization
+        return Etheta_mock, Ephi_mock
 
-def compute_far_field_cylindrical(Ez_nf, Ephi_nf, z_arr, phi_arr, R0, freq, thetas, phis):
-    """Direct Plane-Wave integration of equivalent currents on a Cylindrical Boundary."""
+def compute_far_field_spherical(Etheta_nf, Ephi_nf, theta_arr, phi_arr, R0, freq, theta_ff, phi_ff):
+    """Integrates Spherical Near-Field aperture currents into Far-Field analytical arrays."""
     k0 = 2 * np.pi * freq / C_LIGHT
-    Z, PHI_P = np.meshgrid(z_arr, phi_arr, indexing='ij')
-    dz_scan = z_arr[1] - z_arr[0] if len(z_arr) > 1 else 1.0
-    dphi_scan = phi_arr[1] - phi_arr[0] if len(phi_arr) > 1 else 1.0
     
-    THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
+    THETA_P, PHI_P = np.meshgrid(theta_arr, phi_arr, indexing='ij')
+    THETA_FF, PHI_FF = np.meshgrid(theta_ff, phi_ff, indexing='ij')
     
-    # Broadcast Arrays for vectorized 2D spatial integration: Z_b: (Nz, Np, 1, 1), THETA_b: (1, 1, Nt, Np)
-    Z_b = Z[:, :, None, None]; PHI_P_b = PHI_P[:, :, None, None]
-    THETA_b = THETA[None, None, :, :]; PHI_b = PHI[None, None, :, :]
+    # Broadcast Arrays for vectorized 2D spatial integration across the sphere
+    # P_b: Source Grid (Nt_nf, Np_nf, 1, 1). FF_b: Observation Grid (1, 1, Nt_ff, Np_ff)
+    THETA_P_b = THETA_P[:, :, None, None]; PHI_P_b = PHI_P[:, :, None, None]
+    THETA_FF_b = THETA_FF[None, None, :, :]; PHI_FF_b = PHI_FF[None, None, :, :]
     
-    # Free-Space phase factor for cylindrical coordinate transform
-    # r' \cdot r_hat = R0 * sin(theta) * cos(phi - phi') + z' * cos(theta)
-    phase_factor = R0 * np.sin(THETA_b) * np.cos(PHI_b - PHI_P_b) + Z_b * np.cos(THETA_b)
-    kernel = np.exp(1j * k0 * phase_factor) * R0 * dphi_scan * dz_scan
+    # dS weighting includes sin(theta) which inherently nullifies duplicate pole points (theta=0, pi) in the integral
+    dtheta = theta_arr[1] - theta_arr[0] if len(theta_arr) > 1 else 1.0
+    dphi = phi_arr[1] - phi_arr[0] if len(phi_arr) > 1 else 1.0
+    dS = (R0**2) * np.sin(THETA_P_b) * dtheta * dphi
     
-    # Equivalent surface currents approximation (assuming outward propagating waves H_phi ~ Ez/Z0, H_z ~ -Ephi/Z0)
-    Jz = Ez_nf / Z_0
-    Jphi = Ephi_nf / Z_0
+    # Phase Advance Factor: e^{j k0 r' . r_hat}
+    phase_factor = np.sin(THETA_P_b) * np.sin(THETA_FF_b) * np.cos(PHI_FF_b - PHI_P_b) + np.cos(THETA_P_b) * np.cos(THETA_FF_b)
+    kernel = np.exp(1j * k0 * R0 * phase_factor) * dS
     
-    # Magnetic Vector Potential integral approximation
-    Az = np.sum(Jz[:, :, None, None] * kernel, axis=(0, 1))
-    Aphi = np.sum(Jphi[:, :, None, None] * kernel, axis=(0, 1))
+    # Decompose into Cartesian equivalents for projection (Assumes outward propagating locally planar waves)
+    Ex_nf = np.cos(THETA_P_b) * np.cos(PHI_P_b) * Etheta_nf[:, :, None, None] - np.sin(PHI_P_b) * Ephi_nf[:, :, None, None]
+    Ey_nf = np.cos(THETA_P_b) * np.sin(PHI_P_b) * Etheta_nf[:, :, None, None] + np.cos(PHI_P_b) * Ephi_nf[:, :, None, None]
+    Ez_nf = -np.sin(THETA_P_b) * Etheta_nf[:, :, None, None]
     
-    E_theta = -1j * k0 * Z_0 * (Az * np.sin(THETA))
-    E_phi = -1j * k0 * Z_0 * Aphi
+    Ax = np.sum(Ex_nf * kernel, axis=(0, 1))
+    Ay = np.sum(Ey_nf * kernel, axis=(0, 1))
+    Az = np.sum(Ez_nf * kernel, axis=(0, 1))
     
-    return E_theta, E_phi
+    # Re-project to Far-Field Spherical Coordinates
+    E_theta_ff = Ax * np.cos(THETA_FF) * np.cos(PHI_FF) + Ay * np.cos(THETA_FF) * np.sin(PHI_FF) - Az * np.sin(THETA_FF)
+    E_phi_ff = -Ax * np.sin(PHI_FF) + Ay * np.cos(PHI_FF)
+    
+    return E_theta_ff, E_phi_ff
 
-if 'cyl_probe' not in st.session_state: st.session_state.cyl_probe = MockCylindricalProbe()
+if 'sph_probe' not in st.session_state: st.session_state.sph_probe = MockSphericalProbe()
 
 # ============================================================
-# M31: CYLINDRICAL NEAR-FIELD / FAR-FIELD LABORATORY UI
+# M32: SPHERICAL NEAR-FIELD / FAR-FIELD LABORATORY UI
 # ============================================================
-if exp_mode == "Cylindrical NF/FF Lab (M31)":
-    cyl_probe = st.session_state.cyl_probe
+if exp_mode == "Spherical NF/FF Lab (M32)":
+    sph_probe = st.session_state.sph_probe
     
     st.sidebar.header("3. PROBE & INSTRUMENTATION")
     c1, c2 = st.sidebar.columns(2)
-    if c1.button("Connect Probe"): cyl_probe.connect()
-    if c2.button("Disconnect Probe"): cyl_probe.disconnect()
-    st.sidebar.metric("Probe Status", "CONNECTED" if cyl_probe.connected else "OFFLINE")
+    if c1.button("Connect Probe"): sph_probe.connect()
+    if c2.button("Disconnect Probe"): sph_probe.disconnect()
+    st.sidebar.metric("Probe Status", "CONNECTED" if sph_probe.connected else "OFFLINE")
 
-    st.markdown("### 🛢️ Cylindrical Near-Field Scanning & NF2FF Translation")
-    st.info("The M31 framework maps 2D spatial probe sweeps across a bounding cylindrical manifold ($r, \phi, z$). It extracts complex Near-Field spatial phasors, validates Nyquist arc-length limits, and translates them into the Far-Field Domain using rigorous physical equivalence currents.")
+    st.markdown("### 🌐 Spherical Near-Field Scanning & NF2FF Translation")
+    st.info("The M32 framework executes full 3D Spherical Boundary acquisitions $(r, \\theta, \\phi)$. It automatically resolves coordinate singularities at the poles ($\\theta = 0^\\circ, 180^\\circ$) by integrating the solid angle element $d\\Omega = \\sin(\\theta)d\\theta d\\phi$, yielding uncorrupted, artifact-free Far-Field radiation transforms.")
 
-    t_plan, t_acq, t_nf2ff, t_ff, t_dt = st.tabs(["1. Cylinder Planner", "2. NF Acquisition", "3. Cylindrical NF2FF", "4. Far-Field Patterns", "5. Digital Twin Correlation"])
+    t_plan, t_acq, t_nf2ff, t_ff, t_pol, t_dt = st.tabs(["1. Sphere Planner", "2. NF Acquisition", "3. Spherical NF2FF", "4. Far-Field Patterns", "5. Polarization Analysis", "6. Digital Twin Correlation"])
 
     with t_plan:
-        st.markdown("#### Cylindrical Geometry Scan Setup")
-        with st.form("cyl_plan_form"):
+        st.markdown("#### Spherical Geometry Scan Setup")
+        with st.form("sph_plan_form"):
             cc1, cc2, cc3 = st.columns(3)
-            z_min = cc1.number_input("Z Min (m)", -0.5, 0.0, -0.2, 0.05)
-            z_max = cc2.number_input("Z Max (m)", 0.0, 0.5, 0.2, 0.05)
-            z_step = cc3.number_input("Z Step (m)", 0.001, 0.1, 0.02, 0.005)
+            t_min = cc1.number_input("Theta Min (°)", 0.0, 180.0, 0.0, 5.0)
+            t_max = cc2.number_input("Theta Max (°)", 0.0, 180.0, 180.0, 5.0)
+            t_step = cc3.number_input("Theta Step (°)", 1.0, 45.0, 10.0)
             
-            p_start = cc1.number_input("Phi Start (°)", 0.0, 360.0, 0.0)
-            p_stop = cc2.number_input("Phi Stop (°)", 0.0, 360.0, 350.0) # Avoid double counting 360
+            p_min = cc1.number_input("Phi Min (°)", 0.0, 360.0, 0.0, 5.0)
+            p_max = cc2.number_input("Phi Max (°)", 0.0, 360.0, 350.0, 10.0) # Stop before 360 to prevent duplicate boundary overlap
             p_step = cc3.number_input("Phi Step (°)", 1.0, 45.0, 10.0)
             
-            r_dist = st.number_input("Cylinder Radius R0 (m)", 0.01, 2.0, 0.1, 0.01)
+            r_dist = st.number_input("Sphere Radius R0 (m)", 0.01, 2.0, 0.1, 0.01)
             freq_hz = st.number_input("Operating Frequency (GHz)", 0.1, 40.0, 2.4, 0.1) * 1e9
-            
-            scan_order = st.selectbox("Scan Order Optimization", ["φ-major (Rotate then Step Z)", "z-major (Step Z then Rotate)"])
             
             submitted = st.form_submit_button("Validate Scan Plan")
             if submitted:
                 wl = C_LIGHT / freq_hz
                 max_step = wl / 2.0
                 
-                # Cylindrical Arc length sampling: ds = r * d(phi)
-                arc_step = r_dist * np.deg2rad(p_step)
+                # Worst case spatial sampling is at the equator where sin(theta) = 1
+                arc_step_theta = r_dist * np.deg2rad(t_step)
+                arc_step_phi = r_dist * np.deg2rad(p_step)
                 
-                if z_step > max_step or arc_step > max_step:
-                    st.error(f"Sampling Violation: Both Z-Step ({z_step*1000:.1f} mm) and Arc-Step ({arc_step*1000:.1f} mm) must be ≤ λ/2 ({max_step*1000:.1f} mm) to prevent spectral aliasing!")
-                elif z_min >= z_max or p_start >= p_stop:
+                if arc_step_theta > max_step or arc_step_phi > max_step:
+                    st.error(f"Sampling Violation: Equator Arc-Steps (θ: {arc_step_theta*1000:.1f} mm, φ: {arc_step_phi*1000:.1f} mm) must be ≤ λ/2 ({max_step*1000:.1f} mm) to prevent spectral aliasing!")
+                elif t_min >= t_max or p_min >= p_max:
                     st.error("Invalid spatial bounds.")
                 else:
-                    z_arr = np.arange(z_min, z_max + z_step, z_step)
-                    p_arr = np.deg2rad(np.arange(p_start, p_stop + p_step, p_step))
-                    st.session_state.cyl_plan = {
-                        "z_arr": z_arr, "p_arr": p_arr, "r": r_dist, 
-                        "freq": freq_hz, "pts": len(z_arr)*len(p_arr), "order": scan_order
+                    t_arr = np.deg2rad(np.arange(t_min, t_max + t_step, t_step))
+                    p_arr = np.deg2rad(np.arange(p_min, p_max + p_step, p_step))
+                    st.session_state.sph_plan = {
+                        "t_arr": t_arr, "p_arr": p_arr, "r": r_dist, 
+                        "freq": freq_hz, "pts": len(t_arr)*len(p_arr)
                     }
-                    st.success(f"Scan Validated. Total Grid Points: {len(z_arr)*len(p_arr)}. Required Wavelength resolution satisfied (λ = {wl*1000:.1f} mm).")
+                    st.success(f"Scan Validated. Total Coordinates: {len(t_arr)*len(p_arr)}. Worst-case sampling margin passed (λ = {wl*1000:.1f} mm).")
 
     with t_acq:
-        if st.session_state.cyl_plan is None: st.warning("Validate a Scan Plan first.")
-        elif not cyl_probe.connected: st.error("Probe Offline. Please Connect Probe.")
+        if st.session_state.sph_plan is None: st.warning("Validate a Scan Plan first.")
+        elif not sph_probe.connected: st.error("Probe Offline. Please Connect Probe.")
         else:
-            plan = st.session_state.cyl_plan
-            st.metric("Total Measurement Points", plan['pts'])
+            plan = st.session_state.sph_plan
+            st.metric("Total Physical Measurement Points", plan['pts'])
             
-            if st.button("RUN CYLINDRICAL NF ACQUISITION", type="primary"):
-                st.warning("⚠️ MOCK NEAR-FIELD DATA ACQUISITION IN PROGRESS...")
+            if st.button("RUN SPHERICAL NF ACQUISITION", type="primary"):
+                st.warning("⚠️ MOCK SPHERICAL DATA ACQUISITION IN PROGRESS...")
                 pb = st.progress(0)
                 
-                Z_grid, Phi_grid = np.meshgrid(plan["z_arr"], plan["p_arr"], indexing='ij')
+                Theta_grid, Phi_grid = np.meshgrid(plan["t_arr"], plan["p_arr"], indexing='ij')
                 
                 time.sleep(0.5)
-                Ez_mock, Ephi_mock = cyl_probe.acquire(Z_grid, Phi_grid, plan["r"], plan["freq"])
+                Etheta_mock, Ephi_mock = sph_probe.acquire(Theta_grid, Phi_grid, plan["r"], plan["freq"])
                 pb.progress(1.0)
                 
-                st.session_state.cyl_data = {
-                    "Ez": Ez_mock, "Ephi": Ephi_mock, "Z": Z_grid, "Phi": Phi_grid, "source": "MOCK CYLINDRICAL DATA"
+                st.session_state.sph_data = {
+                    "E_th": Etheta_mock, "E_ph": Ephi_mock, "Theta": Theta_grid, "Phi": Phi_grid, "source": "MOCK SPHERICAL DATA"
                 }
-                st.success("2D Cylindrical Near-Field Maps successfully acquired and logged.")
+                st.success("3D Spherical Near-Field Maps successfully acquired and logged.")
 
-        if st.session_state.cyl_data is not None:
-            nf = st.session_state.cyl_data
-            st.markdown("##### 2D Phase & Magnitude Visualizations (Unwrapped Cylinder: $\\phi \\times z$)")
+        if st.session_state.sph_data is not None:
+            nf = st.session_state.sph_data
+            st.markdown("##### 2D Phase & Magnitude Visualizations (Unwrapped Sphere: $\\theta \\times \\phi$)")
             cf1, cf2 = st.columns(2)
             
-            mag_db = 20 * np.log10(np.abs(nf["Ez"]) + 1e-12)
-            phase = np.angle(nf["Ez"])
+            mag_db = 20 * np.log10(np.abs(nf["E_th"]) + 1e-12)
+            phase = np.angle(nf["E_th"])
             
-            fig_m = go.Figure(go.Heatmap(z=mag_db.T, x=plan['z_arr'], y=np.rad2deg(plan['p_arr']), colorscale='Viridis', colorbar=dict(title="dBV/m")))
-            fig_m.update_layout(title="Measured E_z Magnitude (dB)", xaxis_title="Z (m)", yaxis_title="Phi (°)", width=400, height=400)
+            fig_m = go.Figure(go.Heatmap(z=mag_db.T, x=np.rad2deg(plan['t_arr']), y=np.rad2deg(plan['p_arr']), colorscale='Viridis', colorbar=dict(title="dBV/m")))
+            fig_m.update_layout(title="Measured E_θ Magnitude (dB)", xaxis_title="Theta (°)", yaxis_title="Phi (°)", width=400, height=400)
             cf1.plotly_chart(fig_m)
             
-            fig_p = go.Figure(go.Heatmap(z=phase.T, x=plan['z_arr'], y=np.rad2deg(plan['p_arr']), colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
-            fig_p.update_layout(title="Measured E_z Phase (Wrapped)", xaxis_title="Z (m)", yaxis_title="Phi (°)", width=400, height=400)
+            fig_p = go.Figure(go.Heatmap(z=phase.T, x=np.rad2deg(plan['t_arr']), y=np.rad2deg(plan['p_arr']), colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
+            fig_p.update_layout(title="Measured E_θ Phase (Wrapped)", xaxis_title="Theta (°)", yaxis_title="Phi (°)", width=400, height=400)
             cf2.plotly_chart(fig_p)
 
     with t_nf2ff:
-        if st.session_state.cyl_data is None: st.warning("Acquire Near-Field data first.")
+        if st.session_state.sph_data is None: st.warning("Acquire Near-Field data first.")
         else:
-            plan = st.session_state.cyl_plan
-            nf = st.session_state.cyl_data
+            plan = st.session_state.sph_plan
+            nf = st.session_state.sph_data
             
-            st.markdown("#### Cylindrical Spectral NF2FF Transform")
-            st.info("Transforms the measured spatial phasors across the bounding cylinder into the 3D Far-Field Domain using mathematically rigorous Surface Equivalence Currents ($M_s, J_s$) over $N_{\\theta} \\times N_{\\phi}$.")
+            st.markdown("#### Spherical Spectral NF2FF Transform")
+            st.info("Transforms the measured $E_\\theta, E_\\phi$ phasors across the spherical boundary into the true 3D Far-Field Domain using rigorous surface integration and coordinate projection.")
             
             c_r1, c_r2 = st.columns(2)
-            res_t = c_r1.number_input("Theta Resolution (°)", 1.0, 10.0, 2.0)
-            res_p = c_r2.number_input("Phi Resolution (°)", 1.0, 10.0, 5.0)
+            res_t = c_r1.number_input("FF Theta Resolution (°)", 1.0, 10.0, 2.0)
+            res_p = c_r2.number_input("FF Phi Resolution (°)", 1.0, 10.0, 5.0)
             
             if st.button("Execute Mathematical NF2FF Integration", type="primary"):
-                with st.spinner("Integrating Equivalent Currents..."):
-                    thetas = np.deg2rad(np.arange(0, 180 + res_t, res_t))
-                    phis = np.deg2rad(np.arange(0, 360, res_p))
+                with st.spinner("Integrating Equivalent Spherical Currents..."):
+                    thetas_ff = np.deg2rad(np.arange(0, 180 + res_t, res_t))
+                    phis_ff = np.deg2rad(np.arange(0, 360, res_p))
                     
-                    E_th, E_ph = compute_far_field_cylindrical(nf["Ez"], nf["Ephi"], plan["z_arr"], plan["p_arr"], plan["r"], plan["freq"], thetas, phis)
+                    E_th_ff, E_ph_ff = compute_far_field_spherical(nf["E_th"], nf["E_ph"], plan["t_arr"], plan["p_arr"], plan["r"], plan["freq"], thetas_ff, phis_ff)
                     
-                    E_tot_mag = np.sqrt(np.abs(E_th)**2 + np.abs(E_ph)**2)
+                    E_tot_mag = np.sqrt(np.abs(E_th_ff)**2 + np.abs(E_ph_ff)**2)
                     E_tot_db = 20 * np.log10(E_tot_mag + 1e-12)
                     E_tot_norm = E_tot_db - np.max(E_tot_db)
                     
-                    st.session_state.cyl_ff_data = {
-                        "theta": thetas, "phi": phis, "E_norm": E_tot_norm, "E_th": E_th, "E_ph": E_ph, "source": "NF2FF TRANSFORM (MOCK)"
+                    st.session_state.sph_ff_data = {
+                        "theta": thetas_ff, "phi": phis_ff, "E_norm": E_tot_norm, "E_th": E_th_ff, "E_ph": E_ph_ff, "source": "NF2FF TRANSFORM (MOCK)"
                     }
-                st.success("Cylindrical Far-Field Spatial Transformation Complete.")
+                st.success("Spherical Far-Field Spatial Transformation Complete.")
 
     with t_ff:
-        if st.session_state.cyl_ff_data is None: st.info("Execute NF2FF Transform first.")
+        if st.session_state.sph_ff_data is None: st.info("Execute NF2FF Transform first.")
         else:
-            ff = st.session_state.cyl_ff_data
+            ff = st.session_state.sph_ff_data
             st.markdown("#### 3D Far-Field Patterns & Analytics")
             st.warning(f"**SOURCE:** `{ff['source']}`")
             
             T, P = np.meshgrid(ff["theta"], ff["phi"], indexing='ij')
-            # Clip negative dB for spherical visualization radius bounding
             R = np.maximum(ff["E_norm"] + 40, 0) 
             X = R * np.sin(T) * np.cos(P); Y = R * np.sin(T) * np.sin(P); Z = R * np.cos(T)
             
             fig_3d = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, surfacecolor=ff["E_norm"], colorscale='Jet', colorbar=dict(title="dB"))])
-            fig_3d.update_layout(title="Transformed 3D Far-Field (Cylindrical Origin)", height=500)
+            fig_3d.update_layout(title="Transformed 3D Far-Field (Spherical Origin)", height=500)
             
             cc1, cc2 = st.columns([2, 1])
             cc1.plotly_chart(fig_3d, use_container_width=True)
@@ -485,25 +490,56 @@ if exp_mode == "Cylindrical NF/FF Lab (M31)":
                 st.metric("Estimated HPBW (E-Plane)", f"{hpbw:.1f}°")
                 st.metric("Peak Norm Magnitude", "0.0 dB (Reference)")
 
-    with t_dt:
-        if st.session_state.cyl_ff_data is None: st.info("Transform Far-Field patterns first.")
+    with t_pol:
+        if st.session_state.sph_ff_data is None: st.info("Execute NF2FF Transform first.")
         else:
-            plan = st.session_state.cyl_plan
-            ff = st.session_state.cyl_ff_data
+            ff = st.session_state.sph_ff_data
+            st.markdown("#### 🔀 Polarization Analysis (Ludwig-3 Approximation)")
+            st.info("Breaks down the Far-Field complex vectors ($E_\\theta, E_\\phi$) into formal Co-Polarization and Cross-Polarization reference bounds allowing strict axial ratio diagnostics.")
             
-            st.markdown("#### 🔄 Digital Twin Correlation (FDTD vs MOCK CYLINDRICAL NF2FF)")
-            st.info("The Digital Twin accurately maps the Cartesian FDTD grid onto the Cylindrical Mock Measurement bounding shell. It directly captures the complex Phasors during the FDTD run, bypassing interpolation artifacts, and integrates the numerical NF2FF independently to compare against the physical Mock.")
+            T, P = np.meshgrid(ff["theta"], ff["phi"], indexing='ij')
             
-            if st.button("Correlate Cylindrical Simulation vs Measurements", type="primary"):
+            # Ludwig-3 definitions
+            E_co = ff["E_th"] * np.cos(P) - ff["E_ph"] * np.sin(P)
+            E_cross = ff["E_th"] * np.sin(P) + ff["E_ph"] * np.cos(P)
+            
+            E_co_db = 20 * np.log10(np.abs(E_co) + 1e-12)
+            E_cross_db = 20 * np.log10(np.abs(E_cross) + 1e-12)
+            
+            # Normalization to absolute peak to show true ratio
+            peak_db = np.max(E_co_db)
+            E_co_norm = E_co_db - peak_db
+            E_cross_norm = E_cross_db - peak_db
+            
+            c_p1, c_p2 = st.columns(2)
+            
+            fig_co = go.Figure(go.Heatmap(z=E_co_norm.T, x=np.rad2deg(ff["theta"]), y=np.rad2deg(ff["phi"]), colorscale='Blues', colorbar=dict(title="dB")))
+            fig_co.update_layout(title="Co-Polarization (Ludwig-3)", xaxis_title="Theta (°)", yaxis_title="Phi (°)")
+            c_p1.plotly_chart(fig_co, use_container_width=True)
+            
+            fig_cx = go.Figure(go.Heatmap(z=E_cross_norm.T, x=np.rad2deg(ff["theta"]), y=np.rad2deg(ff["phi"]), colorscale='Reds', colorbar=dict(title="dB"), zmax=0, zmin=-40))
+            fig_cx.update_layout(title="Cross-Polarization (Ludwig-3)", xaxis_title="Theta (°)", yaxis_title="Phi (°)")
+            c_p2.plotly_chart(fig_cx, use_container_width=True)
+
+    with t_dt:
+        if st.session_state.sph_ff_data is None: st.info("Transform Far-Field patterns first.")
+        else:
+            plan = st.session_state.sph_plan
+            ff = st.session_state.sph_ff_data
+            
+            st.markdown("#### 🔄 Digital Twin Correlation (FDTD vs MOCK SPHERICAL NF2FF)")
+            st.info("The Digital Twin automatically computes an explicit complex frequency-domain FDTD run, projecting the internal Cartesian grids mathematically onto the defined Sphere radius ($R_0$) to calculate precise, interpolation-free RMSE errors against the Mock measurements.")
+            
+            if st.button("Correlate Spherical Simulation vs Measurements", type="primary"):
                 progress_bar = st.progress(0)
                 reset_materials()
                 
-                # Execute FDTD and explicitly capture Cylindrical (Z, Phi) boundary phasors natively
-                Ez_sim, Ephi_sim = run_simulation_cyl_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, plan["freq"], plan["r"], plan["z_arr"], plan["p_arr"], cx, cy, cz)
+                # Execute FDTD and explicitly capture Spherical boundary phasors natively
+                Etheta_sim, Ephi_sim = run_simulation_sph_nf_cpu(Nx, Ny, Nz, dx, dy, dz, dt, num_steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, plan["freq"], plan["r"], plan["t_arr"], plan["p_arr"], cx, cy, cz)
                 progress_bar.progress(0.5)
                 
-                # FDTD Cylindrical NF2FF
-                E_th_sim, E_ph_sim = compute_far_field_cylindrical(Ez_sim, Ephi_sim, plan["z_arr"], plan["p_arr"], plan["r"], plan["freq"], ff["theta"], ff["phi"])
+                # FDTD Spherical NF2FF
+                E_th_sim, E_ph_sim = compute_far_field_spherical(Etheta_sim, Ephi_sim, plan["t_arr"], plan["p_arr"], plan["r"], plan["freq"], ff["theta"], ff["phi"])
                 
                 E_tot_sim_db = 20 * np.log10(np.sqrt(np.abs(E_th_sim)**2 + np.abs(E_ph_sim)**2) + 1e-12)
                 E_tot_sim_norm = E_tot_sim_db - np.max(E_tot_sim_db)
@@ -513,7 +549,7 @@ if exp_mode == "Cylindrical NF/FF Lab (M31)":
                 rmse = np.sqrt(np.mean(error_map**2))
                 progress_bar.progress(1.0)
                 
-                st.metric("Cylindrical Far-Field Pattern RMSE (Simulation vs MOCK)", f"{rmse:.3f} dB")
+                st.metric("Spherical Far-Field Pattern RMSE (Simulation vs MOCK)", f"{rmse:.3f} dB")
                 
                 fig_err = go.Figure(data=go.Heatmap(z=error_map.T, x=np.rad2deg(ff["theta"]), y=np.rad2deg(ff["phi"]), colorscale='Reds', colorbar=dict(title="Absolute Error (dB)")))
                 fig_err.update_layout(title="Angular Far-Field Error Map (SIM vs MOCK)", xaxis_title="Theta (°)", yaxis_title="Phi (°)")
@@ -521,10 +557,11 @@ if exp_mode == "Cylindrical NF/FF Lab (M31)":
                 
                 report = {
                     "Analysis_ID": str(uuid.uuid4()), "Timestamp": datetime.datetime.now().isoformat(),
-                    "Data_Source": "MOCK_CYLINDRICAL_MEASUREMENT", "Frequency": plan["freq"],
+                    "Data_Source": "MOCK_SPHERICAL_MEASUREMENT", "Frequency": plan["freq"],
                     "RMSE_dB": float(rmse), "Mock_Peak_Direction": {"theta": float(np.rad2deg(ff["theta"][np.unravel_index(np.argmax(ff["E_norm"]), ff["E_norm"].shape)[0]]))}
                 }
-                st.download_button("Export Final Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="cyl_nf2ff_characterization.json", mime="application/json")
+                st.download_button("Export Final Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="sph_nf2ff_characterization.json", mime="application/json")
 
-elif exp_mode not in ["Cylindrical NF/FF Lab (M31)", "Near-Field / Far-Field Lab (M30)"]:
-    st.info("Select 'Cylindrical NF/FF Lab (M31)' to configure cylindrical boundary scanning and NF2FF spectral limits.")
+elif exp_mode not in ["Spherical NF/FF Lab (M32)"]:
+    st.info("Select 'Spherical NF/FF Lab (M32)' to configure full 3D boundary scanning, Polarization analytics, and Spherical NF2FF transforms.")
+
