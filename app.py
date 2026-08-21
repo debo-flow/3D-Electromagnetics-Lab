@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 34 — Advanced Antenna Measurement, Calibration & Reference Correction
+Milestone 35 — Advanced Antenna Characterization & Automated Measurement Validation
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 34 — Advanced Calibration & Reference Correction Lab")
+st.markdown("### Milestone 35 — Advanced Antenna Characterization & Automated Validation")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Advanced Antenna Characterization (M35)",
     "Advanced Antenna Calibration Lab (M34)",
     "Advanced NF2FF Validation (M33)",
     "Spherical NF/FF Lab (M32)",
@@ -93,10 +94,8 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
 ])
 
 # Global States
-if 'm34_raw' not in st.session_state: st.session_state.m34_raw = None
-if 'm34_cal' not in st.session_state: st.session_state.m34_cal = None
-if 'm34_corr' not in st.session_state: st.session_state.m34_corr = None
-if 'm34_ff' not in st.session_state: st.session_state.m34_ff = None
+if 'm35_dataset' not in st.session_state: st.session_state.m35_dataset = None
+if 'm35_char' not in st.session_state: st.session_state.m35_char = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
@@ -145,250 +144,295 @@ def reset_materials(step_dt=dt):
 reset_materials()
 
 # ============================================================
-# MEMORY SAFETY
+# M35: MATH & CHARACTERIZATION ENGINE
 # ============================================================
-bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
-mem_base_bytes = (44 * num_cells * bytes_per_element)
-memory_mb = mem_base_bytes / (1024 * 1024)
-st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
-if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
-elif active_backend == "CPU" and memory_mb > 3000: st.stop()
-
-# ============================================================
-# M34: CALIBRATION & REFERENCE MATHEMATICS
-# ============================================================
-def generate_mock_raw_data(freq, x_arr, y_arr, z_plane):
-    """Generates an uncalibrated, noisy planar NF scan of a dipole."""
-    k0 = 2 * np.pi * freq / C_LIGHT
-    X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
-    R = np.sqrt(X**2 + Y**2 + z_plane**2)
+def generate_m35_mock_dataset():
+    """Generates a structured Mock Far-Field & S11 dataset with intentional imperfections to trigger the Characterization Engine."""
+    np.random.seed(42)
+    freq = 2.4e9
     
-    # Ideal field with systemic measurement attenuation & phase delay (e.g., cable loss)
-    ideal_mag = np.exp(-(X**2 + Y**2)/0.02) / (R + 1e-6)
+    # 1. Mock S-Parameters
+    f_arr = np.linspace(2.0e9, 3.0e9, 101)
+    # Inject a slight resonance shift (2.42 GHz) to trigger correlation anomaly vs operating 2.4 GHz
+    s11_db = -2.0 - 18.0 * np.exp(-((f_arr - 2.42e9)/0.05e9)**2) + np.random.normal(0, 0.5, 101)
+    s11_lin = 10**(s11_db / 20.0)
     
-    # Inject Mock Cable Loss (e.g., -3 dB amplitude drop) and +45 deg arbitrary phase shift
-    attenuation_linear = 10**(-3.0 / 20)
-    phase_offset = np.deg2rad(45.0)
-    
-    # Inject Gaussian Measurement Noise
-    np.random.seed(int(time.time()*1000)%10000)
-    noise_floor = 0.02
-    noise_m = np.random.normal(0, noise_floor, X.shape)
-    noise_p = np.random.normal(0, 0.1, X.shape)
-    
-    # RAW Distorted Field
-    mag_raw = (ideal_mag * attenuation_linear) + noise_m
-    phase_raw = -k0 * R + phase_offset + noise_p
-    
-    Ex_raw = mag_raw * np.exp(1j * phase_raw)
-    Ey_raw = 0.05 * Ex_raw # Cross-polar leakage
-    
-    return Ex_raw, Ey_raw
-
-def analyze_data_quality(Ex_raw):
-    """Diagnostic check for clipping, saturation, and SNR."""
-    mag = np.abs(Ex_raw)
-    max_val = np.max(mag)
-    mean_val = np.mean(mag)
-    
-    # Estimate noise floor from the edge of the scan
-    noise_floor_est = np.mean(mag[0, :]) + 1e-12 
-    snr_linear = max_val / noise_floor_est
-    snr_db = 20 * np.log10(snr_linear)
-    
-    saturation_limit = 10.0 # Arbitrary V/m hardware limit
-    clipped = np.any(mag > saturation_limit)
-    has_nan = np.isnan(Ex_raw).any() or np.isinf(Ex_raw).any()
-    
-    quality = "VALID"
-    if has_nan or clipped: quality = "INVALID"
-    elif snr_db < 15.0: quality = "WARNING"
-    
-    return {"snr_db": snr_db, "clipped": clipped, "has_nan": has_nan, "quality": quality, "max_val": max_val}
-
-def compute_far_field_direct_planar(Ex_nf, Ey_nf, x_arr, y_arr, freq, thetas, phis):
-    """NF2FF Plane Wave Spectrum Integration (from M33)."""
-    k0 = 2 * np.pi * freq / C_LIGHT
-    X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
-    dx_s = x_arr[1] - x_arr[0] if len(x_arr) > 1 else 1.0
-    dy_s = y_arr[1] - y_arr[0] if len(y_arr) > 1 else 1.0
+    # 2. Mock 3D Far-Field Pattern (with artificial Side Lobes)
+    thetas = np.deg2rad(np.arange(0, 181, 2))
+    phis = np.deg2rad(np.arange(0, 360, 2))
     THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
     
-    kx = k0 * np.sin(THETA) * np.cos(PHI)
-    ky = k0 * np.sin(THETA) * np.sin(PHI)
+    # Z-directed dipole + secondary high-frequency ripple for side lobes + structural noise
+    U_ideal = np.abs(np.sin(THETA))**2
+    ripple = 0.1 * np.abs(np.sin(5 * THETA))**2
+    noise = np.random.uniform(0, 0.01, THETA.shape)
     
-    X_b = X[:, :, None, None]; Y_b = Y[:, :, None, None]
-    kx_b = kx[None, None, :, :]; ky_b = ky[None, None, :, :]
+    U_mag = U_ideal + ripple + noise
     
-    kernel = np.exp(1j * (kx_b * X_b + ky_b * Y_b))
-    Fx = np.sum(Ex_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_s * dy_s
-    Fy = np.sum(Ey_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_s * dy_s
+    # Construct complex fields representing this power distribution (mostly E_theta)
+    E_th = np.sqrt(U_mag) * np.exp(1j * np.random.normal(0, 0.1, THETA.shape))
+    E_ph = 0.05 * E_th # Slight cross-polarization
     
-    E_theta = (Fx * np.cos(PHI) + Fy * np.sin(PHI)) * np.cos(THETA)
-    E_phi = -Fx * np.sin(PHI) + Fy * np.cos(PHI)
-    return E_theta, E_phi
+    return {
+        "freq": freq, "f_arr": f_arr, "s11_mag": s11_lin, "s11_db": s11_db,
+        "thetas": thetas, "phis": phis, "E_th": E_th, "E_ph": E_ph, "source": "MOCK DATA"
+    }
+
+def compute_1d_beam_metrics(angles, U_cut):
+    """Computes Peak, HPBW, Side Lobes, and Nulls for a 1D Radiation Cut."""
+    U_db = 10 * np.log10(U_cut / np.max(U_cut) + 1e-12)
+    peak_idx = np.argmax(U_cut)
+    peak_angle = angles[peak_idx]
+    
+    # HPBW (-3dB)
+    hp_idxs = np.where(U_db >= -3.0)[0]
+    hpbw = 0.0
+    if len(hp_idxs) > 1:
+        # Check if it wraps around or is continuous
+        hpbw = abs(angles[hp_idxs[-1]] - angles[hp_idxs[0]])
+        if hpbw > 180: hpbw = 360 - hpbw
+        
+    # Simple Peak/Null Detector
+    peaks = []; nulls = []
+    for i in range(1, len(U_cut)-1):
+        if U_db[i] > U_db[i-1] and U_db[i] > U_db[i+1] and U_db[i] > -40: peaks.append(i)
+        if U_db[i] < U_db[i-1] and U_db[i] < U_db[i+1] and U_db[i] < -10: nulls.append(i)
+        
+    # Side Lobe Level (SLL)
+    sll_db = -999.0
+    for p in peaks:
+        if p != peak_idx and U_db[p] > sll_db:
+            if abs(angles[p] - peak_angle) > 20: # Ensure it's not just noise on the main lobe
+                sll_db = U_db[p]
+                
+    return {"peak_angle": peak_angle, "hpbw": hpbw, "sll_db": sll_db if sll_db > -999 else None, "nulls": [angles[n] for n in nulls]}
+
+def characterize_antenna(dataset):
+    """Core Engine integrating M35 Physics analytics."""
+    char = {"anomalies": [], "validation": "PASS"}
+    
+    # 1. S-Parameter Analytics
+    s11_db = dataset["s11_db"]
+    f_arr = dataset["f_arr"]
+    min_idx = np.argmin(s11_db)
+    f_res = f_arr[min_idx]
+    s11_res = s11_db[min_idx]
+    vswr_res = (1 + 10**(s11_res/20)) / (1 - 10**(s11_res/20) + 1e-12)
+    
+    # Bandwidth (-10dB)
+    bw_idx = np.where(s11_db <= -10.0)[0]
+    bw_hz = (f_arr[bw_idx[-1]] - f_arr[bw_idx[0]]) if len(bw_idx) > 1 else 0.0
+    
+    mismatch_eff = 1.0 - (10**(s11_res/20))**2
+    
+    if abs(f_res - dataset["freq"]) > 50e6:
+        char["anomalies"].append(f"WARNING: Resonance ({f_res/1e9:.2f} GHz) shifted from Operating Freq ({dataset['freq']/1e9:.2f} GHz).")
+        char["validation"] = "WARNING"
+        
+    char["s_params"] = {"f_res": f_res, "s11_res": s11_res, "vswr": vswr_res, "bw_hz": bw_hz, "mismatch_eff": mismatch_eff}
+    
+    # 2. 3D Radiation & Directivity Integration (D = 4 * pi * U_max / P_rad)
+    E_th = dataset["E_th"]; E_ph = dataset["E_ph"]
+    thetas = dataset["thetas"]; phis = dataset["phis"]
+    THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
+    
+    U = np.abs(E_th)**2 + np.abs(E_ph)**2
+    U_max = np.max(U)
+    
+    dtheta = thetas[1] - thetas[0] if len(thetas) > 1 else 1.0
+    dphi = phis[1] - phis[0] if len(phis) > 1 else 1.0
+    
+    # Integral U * sin(theta) d_theta d_phi
+    P_rad = np.sum(U * np.sin(THETA) * dtheta * dphi)
+    
+    directivity_lin = (4 * np.pi * U_max) / (P_rad + 1e-12)
+    directivity_db = 10 * np.log10(directivity_lin + 1e-12)
+    
+    # Gain = Eff * D
+    rad_eff = 0.95 # Assume 95% physical radiation efficiency for MOCK lossy FR4 dipole
+    total_eff = rad_eff * mismatch_eff
+    gain_db = 10 * np.log10(total_eff * directivity_lin + 1e-12)
+    
+    idx_t, idx_p = np.unravel_index(np.argmax(U), U.shape)
+    peak_theta = np.rad2deg(thetas[idx_t])
+    peak_phi = np.rad2deg(phis[idx_p])
+    
+    char["radiation"] = {
+        "D_db": directivity_db, "G_db": gain_db, "rad_eff": rad_eff, "tot_eff": total_eff,
+        "peak_theta": peak_theta, "peak_phi": peak_phi
+    }
+    
+    # 3. 2D Cut Analytics (Beamwidth, SLL, FBR)
+    # E-Plane (Fixed Phi)
+    e_cut = U[:, idx_p]
+    e_metrics = compute_1d_beam_metrics(np.rad2deg(thetas), e_cut)
+    
+    # Front-to-Back Ratio (Assumes peak is front, pi-theta is back)
+    back_theta_idx = np.argmin(np.abs(np.rad2deg(thetas) - (180.0 - peak_theta)))
+    fbr_db = 10 * np.log10(U_max / (U[back_theta_idx, idx_p] + 1e-12))
+    
+    if e_metrics["sll_db"] is not None and e_metrics["sll_db"] > -10.0:
+        char["anomalies"].append(f"WARNING: High Side-Lobe Level detected ({e_metrics['sll_db']:.1f} dB).")
+        char["validation"] = "WARNING"
+        
+    char["beam"] = {"e_hpbw": e_metrics["hpbw"], "e_sll": e_metrics["sll_db"], "fbr": fbr_db, "nulls": e_metrics["nulls"]}
+    
+    # 4. Polarization (Axial Ratio at Main Beam)
+    E_th_peak = E_th[idx_t, idx_p]
+    E_ph_peak = E_ph[idx_t, idx_p]
+    
+    # Axial ratio (Simplified ratio of orthogonal magnitudes for linear approximation)
+    if np.abs(E_ph_peak) < 1e-6: ar_db = 99.9 # Linear
+    else:
+        ar_lin = np.abs(E_th_peak) / np.abs(E_ph_peak)
+        ar_db = 20 * np.log10(max(ar_lin, 1/ar_lin))
+    
+    char["polarization"] = {"axial_ratio": ar_db, "type": "Linear" if ar_db > 20 else ("Circular" if ar_db <= 3 else "Elliptical")}
+    
+    return char
 
 # ============================================================
-# M34: ADVANCED CALIBRATION LABORATORY UI
+# M35: ADVANCED CHARACTERIZATION LABORATORY UI
 # ============================================================
-if exp_mode == "Advanced Antenna Calibration Lab (M34)":
-    st.markdown("### 🎛️ Advanced Calibration & Reference Correction Lab")
-    st.info("Ingests uncalibrated raw Near-Field arrays, evaluates Data Quality (SNR, Clipping), strictly protects raw immutability, and executes complex instrumentation adjustments ($C = A e^{j\\phi}$) alongside Reference Plane spatial phase shifts before processing the NF2FF algorithm.")
+if exp_mode == "Advanced Antenna Characterization (M35)":
+    st.markdown("### 📊 Advanced Antenna Characterization & Validation Lab")
+    st.info("Ingests validated 3D Far-Field spatial matrices and S-Parameters to compute robust, automated metrology scorecards including true Spherical Directivity Integrals ($4\\pi U_{max} / P_{rad}$), Total Efficiency limits, and Automated Anomaly detection without fabricating physics.")
     
-    t_raw, t_cal, t_corr, t_ff, t_rep = st.tabs([
-        "1. Raw Data & Quality", "2. Calibration Profile", "3. Apply Corrections", "4. NF2FF & Comparison", "5. Provenance Report"
+    t_load, t_score, t_rad, t_spar, t_rep = st.tabs([
+        "1. Load Dataset", "2. Performance Scorecard", "3. Beam & Polarization", "4. S-Parameter Correlation", "5. Automated Report"
     ])
     
-    freq_test = 2.4e9
-    wl = C_LIGHT / freq_test
-    x_arr = np.arange(-0.4, 0.41, 0.02)
-    y_arr = np.arange(-0.4, 0.41, 0.02)
-    z_dist = 0.2
-    
-    with t_raw:
-        st.markdown("#### Raw Measurement Ingestion & Diagnostics")
-        if st.button("Generate MOCK Uncalibrated Dataset"):
-            Ex_raw, Ey_raw = generate_mock_raw_data(freq_test, x_arr, y_arr, z_dist)
-            q_metrics = analyze_data_quality(Ex_raw)
-            st.session_state.m34_raw = {
-                "Ex": Ex_raw, "Ey": Ey_raw, "freq": freq_test, "z": z_dist, "qual": q_metrics, "source": "MOCK DATA"
-            }
-            st.success("Raw dataset acquired and locked. (Immutable)")
+    with t_load:
+        st.markdown("#### Antenna Dataset Selection")
+        if st.button("Generate Comprehensive Target Dataset (MOCK)", type="primary"):
+            with st.spinner("Generating MOCK Far-Field Spatial Tensors & S-Parameters..."):
+                st.session_state.m35_dataset = generate_m35_mock_dataset()
+                st.session_state.m35_char = characterize_antenna(st.session_state.m35_dataset)
+            st.success("MOCK Dataset Generated and Characterization Engine executed successfully.")
             
-        if st.session_state.m34_raw is not None:
-            r = st.session_state.m34_raw
-            q = r["qual"]
-            
-            c_q1, c_q2, c_q3, c_q4 = st.columns(4)
-            c_q1.metric("Data Quality", q["quality"], "Safe" if q["quality"] == "VALID" else "Review", delta_color="normal" if q["quality"] == "VALID" else "inverse")
-            c_q2.metric("Est. SNR", f"{q['snr_db']:.1f} dB")
-            c_q3.metric("Peak Voltage", f"{q['max_val']:.2f} V/m")
-            c_q4.metric("Saturation/Clipping", "DETECTED" if q["clipped"] else "NONE")
-            
-            # Plot Raw
-            mag_raw_db = 20 * np.log10(np.abs(r["Ex"]) + 1e-12)
-            fig_r = go.Figure(data=go.Heatmap(z=mag_raw_db.T, x=x_arr, y=y_arr, colorscale='Viridis', colorbar=dict(title="dBV/m")))
-            fig_r.update_layout(title="RAW Uncalibrated Near-Field Magnitude", xaxis_title="X (m)", yaxis_title="Y (m)", width=500, height=400)
-            st.plotly_chart(fig_r)
+        if st.session_state.m35_dataset is not None:
+            ds = st.session_state.m35_dataset
+            st.write(f"**Data Source:** `{ds['source']}`")
+            st.write(f"**Operating Frequency:** `{ds['freq']/1e9:.2f} GHz`")
+            st.write(f"**Spatial Array:** `{len(ds['thetas'])} x {len(ds['phis'])} points`")
 
-    with t_cal:
-        st.markdown("#### Instrument & Probe Calibration Matrix")
-        st.info("Calibration corrects for systematic insertion losses (cables/connectors) and phase delays. Reference plane correction mathematically translates the phase center along the propagation axis.")
-        
-        with st.form("cal_form"):
-            c_c1, c_c2, c_c3 = st.columns(3)
-            # Inverse of the injected Mock errors to restore the true signal
-            amp_corr_db = c_c1.number_input("Amplitude Correction (dB)", -10.0, 10.0, 3.0, 0.5) 
-            phase_corr_deg = c_c2.number_input("Instrument Phase Correction (°)", -180.0, 180.0, -45.0, 5.0)
-            ref_shift_m = c_c3.number_input("Reference Plane Shift (m)", -1.0, 1.0, 0.0, 0.01)
-            
-            if st.form_submit_button("Load Calibration Profile"):
-                amp_lin = 10**(amp_corr_db / 20.0)
-                phase_rad = np.deg2rad(phase_corr_deg)
-                
-                # Complex Calibration Factor: C = A * exp(j * phi)
-                C_factor = amp_lin * np.exp(1j * phase_rad)
-                
-                st.session_state.m34_cal = {
-                    "amp_db": amp_corr_db, "phase_deg": phase_corr_deg, "ref_shift_m": ref_shift_m,
-                    "C_factor": C_factor, "status": "CALIBRATION LOADED"
-                }
-                st.success("Complex Calibration Profile Verified & Loaded.")
-
-    with t_corr:
-        st.markdown("#### Apply Mathematical Corrections")
-        if st.session_state.m34_raw is None or st.session_state.m34_cal is None:
-            st.warning("Load Raw Data and Calibration Profile first.")
+    with t_score:
+        if st.session_state.m35_char is None: st.warning("Load a dataset first.")
         else:
-            raw = st.session_state.m34_raw
-            cal = st.session_state.m34_cal
+            c = st.session_state.m35_char
+            st.markdown("#### 🏆 Antenna Characterization Scorecard")
             
-            if st.button("Execute Pipeline Corrections", type="primary"):
-                # 1. Complex Instrument Correction
-                Ex_corr = raw["Ex"] * cal["C_factor"]
-                Ey_corr = raw["Ey"] * cal["C_factor"]
+            # Validation Banner
+            if c["validation"] == "PASS": st.success("OVERALL VALIDATION: PASS - No Critical Anomalies Detected.")
+            else: st.warning("OVERALL VALIDATION: WARNING - Anomalies Detected in Dataset.")
+            
+            # Anomaly Log
+            if len(c["anomalies"]) > 0:
+                st.markdown("**Automated Anomaly Detection Engine:**")
+                for a in c["anomalies"]: st.error(a)
                 
-                # 2. Reference Plane Phase Shift: d_phi = k0 * d
-                k0 = 2 * np.pi * raw["freq"] / C_LIGHT
-                phase_shift = np.exp(1j * k0 * cal["ref_shift_m"])
-                
-                Ex_corr = Ex_corr * phase_shift
-                Ey_corr = Ey_corr * phase_shift
-                
-                st.session_state.m34_corr = {
-                    "Ex": Ex_corr, "Ey": Ey_corr, "source": "CORRECTED DATA"
-                }
-                st.success("Corrections applied successfully. Original RAW data remains completely preserved.")
-                
-            if st.session_state.m34_corr is not None:
-                corr = st.session_state.m34_corr
-                cc1, cc2 = st.columns(2)
-                
-                # Compare Phase (to visually prove calibration)
-                raw_ph = np.angle(raw["Ex"])
-                corr_ph = np.angle(corr["Ex"])
-                
-                fig_pr = go.Figure(data=go.Heatmap(z=raw_ph.T, x=x_arr, y=y_arr, colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
-                fig_pr.update_layout(title="RAW Phase", width=350, height=350)
-                cc1.plotly_chart(fig_pr)
-                
-                fig_pc = go.Figure(data=go.Heatmap(z=corr_ph.T, x=x_arr, y=y_arr, colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
-                fig_pc.update_layout(title="CORRECTED Phase", width=350, height=350)
-                cc2.plotly_chart(fig_pc)
+            st.markdown("---")
+            cc1, cc2, cc3, cc4 = st.columns(4)
+            cc1.metric("Peak Direction (θ, φ)", f"{c['radiation']['peak_theta']:.0f}°, {c['radiation']['peak_phi']:.0f}°")
+            cc2.metric("Directivity (Spherical Int)", f"{c['radiation']['D_db']:.2f} dBi")
+            cc3.metric("Realized Gain", f"{c['radiation']['G_db']:.2f} dB")
+            cc4.metric("Total Efficiency", f"{c['radiation']['tot_eff']*100:.1f} %")
+            
+            cc5, cc6, cc7, cc8 = st.columns(4)
+            cc5.metric("HPBW (E-Plane)", f"{c['beam']['e_hpbw']:.1f}°")
+            sll_str = f"{c['beam']['e_sll']:.1f} dBc" if c['beam']['e_sll'] is not None else "N/A"
+            cc6.metric("Peak Side-Lobe Level", sll_str)
+            cc7.metric("Front-to-Back Ratio", f"{c['beam']['fbr']:.1f} dB")
+            cc8.metric("Polarization Type", f"{c['polarization']['type']} (AR: {c['polarization']['axial_ratio']:.1f} dB)")
 
-    with t_ff:
-        st.markdown("#### NF2FF Transform: Raw vs Corrected Comparison")
-        if st.session_state.m34_raw is None or st.session_state.m34_corr is None:
-            st.warning("Ensure Data is Corrected in Tab 3.")
+    with t_rad:
+        if st.session_state.m35_dataset is None: st.warning("Load a dataset first.")
         else:
-            if st.button("Run Far-Field Correlation"):
-                raw = st.session_state.m34_raw
-                corr = st.session_state.m34_corr
-                thetas = np.deg2rad(np.arange(0, 90, 2))
-                phis = np.deg2rad(np.array([0.0])) # E-Plane only for fast visualization
+            ds = st.session_state.m35_dataset
+            c = st.session_state.m35_char
+            
+            st.markdown("#### 3D Radiation Pattern & 2D E-Plane Cut")
+            
+            U = np.abs(ds["E_th"])**2 + np.abs(ds["E_ph"])**2
+            U_db = 10 * np.log10(U / np.max(U) + 1e-12)
+            
+            col_r1, col_r2 = st.columns([1, 1])
+            
+            with col_r1:
+                # 3D
+                T, P = np.meshgrid(ds["thetas"], ds["phis"], indexing='ij')
+                R = np.maximum(U_db + 40, 0)
+                X = R * np.sin(T) * np.cos(P); Y = R * np.sin(T) * np.sin(P); Z = R * np.cos(T)
                 
-                # Transform Raw
-                Eth_raw, Eph_raw = compute_far_field_direct_planar(raw["Ex"], raw["Ey"], x_arr, y_arr, raw["freq"], thetas, phis)
-                ff_raw_db = 20 * np.log10(np.sqrt(np.abs(Eth_raw)**2 + np.abs(Eph_raw)**2) + 1e-12)
+                fig_3d = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, surfacecolor=U_db, colorscale='Jet', colorbar=dict(title="Norm dB"))])
+                fig_3d.update_layout(title="3D Normalized Far-Field", height=450)
+                st.plotly_chart(fig_3d, use_container_width=True)
                 
-                # Transform Corrected
-                Eth_corr, Eph_corr = compute_far_field_direct_planar(corr["Ex"], corr["Ey"], x_arr, y_arr, raw["freq"], thetas, phis)
-                ff_corr_db = 20 * np.log10(np.sqrt(np.abs(Eth_corr)**2 + np.abs(Eph_corr)**2) + 1e-12)
+            with col_r2:
+                # 2D
+                idx_p = np.argmin(np.abs(ds["phis"] - np.deg2rad(c["radiation"]["peak_phi"])))
+                e_cut = U_db[:, idx_p]
                 
-                # Absolute magnitudes (Not normalized, to show true calibration gain impact)
-                st.session_state.m34_ff = {"thetas": thetas, "ff_raw": ff_raw_db[:, 0], "ff_corr": ff_corr_db[:, 0]}
+                theta_deg = np.rad2deg(ds["thetas"])
+                theta_full = np.concatenate([theta_deg, 360 - theta_deg[::-1]])
+                e_cut_full = np.concatenate([e_cut, U_db[::-1, np.argmin(np.abs(ds["phis"] - np.deg2rad((c["radiation"]["peak_phi"]+180)%360)))]])
+                
+                fig_2d = go.Figure(go.Scatterpolar(r=e_cut_full, theta=theta_full, mode='lines', line_color='blue'))
+                fig_2d.update_layout(title=f"E-Plane Cut (Phi={c['radiation']['peak_phi']:.0f}°)", polar=dict(radialaxis=dict(range=[-40, 0], ticksuffix=" dB")), height=450)
+                st.plotly_chart(fig_2d, use_container_width=True)
 
-            if st.session_state.m34_ff is not None:
-                ff = st.session_state.m34_ff
-                
-                st.info("Notice the absolute shift in the Far-Field Gain level due to the applied Amplitude Calibration restoration.")
-                fig_ff = go.Figure()
-                fig_ff.add_trace(go.Scatter(x=np.rad2deg(ff["thetas"]), y=ff["ff_raw"], mode='lines', name="Far-Field (from RAW)", line=dict(dash='dash', color='red')))
-                fig_ff.add_trace(go.Scatter(x=np.rad2deg(ff["thetas"]), y=ff["ff_corr"], mode='lines', name="Far-Field (from CORRECTED)", line=dict(color='blue')))
-                fig_ff.update_layout(title="Absolute Far-Field Magnitude (E-Plane)", xaxis_title="Theta (°)", yaxis_title="Magnitude (dB)")
-                st.plotly_chart(fig_ff, use_container_width=True)
+    with t_spar:
+        if st.session_state.m35_dataset is None: st.warning("Load a dataset first.")
+        else:
+            ds = st.session_state.m35_dataset
+            c = st.session_state.m35_char
+            
+            st.markdown("#### Frequency Domain Correlation: S11 & Impedance Match")
+            
+            c_s1, c_s2, c_s3 = st.columns(3)
+            c_s1.metric("Resonant Frequency", f"{c['s_params']['f_res']/1e9:.3f} GHz")
+            c_s2.metric("Return Loss @ Resonance", f"{-c['s_params']['s11_res']:.2f} dB")
+            c_s3.metric("-10dB Bandwidth", f"{c['s_params']['bw_hz']/1e6:.1f} MHz")
+            
+            fig_s = go.Figure()
+            fig_s.add_trace(go.Scatter(x=ds["f_arr"]/1e9, y=ds["s11_db"], mode='lines', name='S11 (dB)', line_color='green'))
+            fig_s.add_hline(y=-10.0, line_dash="dash", line_color="red", annotation_text="-10 dB Bandwidth Limit")
+            fig_s.add_vline(x=ds["freq"]/1e9, line_dash="dashdot", line_color="black", annotation_text="Operating Freq")
+            fig_s.update_layout(title="S11 Reflection Coefficient Profile", xaxis_title="Frequency (GHz)", yaxis_title="S11 (dB)")
+            st.plotly_chart(fig_s, use_container_width=True)
 
     with t_rep:
-        if st.session_state.m34_corr is not None:
-            raw = st.session_state.m34_raw
-            cal = st.session_state.m34_cal
+        if st.session_state.m35_char is not None:
+            st.markdown("#### 🗃️ Characterization Data Export")
+            ds = st.session_state.m35_dataset
+            c = st.session_state.m35_char
             
             report = {
-                "Calibration_ID": str(uuid.uuid4()),
+                "Characterization_ID": str(uuid.uuid4()),
                 "Timestamp": datetime.datetime.now().isoformat(),
-                "Data_Source": raw["source"],
-                "Diagnostics": raw["qual"],
-                "Calibration_Applied": {
-                    "Amplitude_dB": cal["amp_db"],
-                    "Phase_Deg": cal["phase_deg"],
-                    "Reference_Plane_Shift_m": cal["ref_shift_m"]
+                "Data_Source": ds["source"],
+                "Validation_Status": c["validation"],
+                "Frequency_Hz": ds["freq"],
+                "Metrics": {
+                    "Directivity_dBi": float(c["radiation"]["D_db"]),
+                    "Gain_dB": float(c["radiation"]["G_db"]),
+                    "Total_Efficiency": float(c["radiation"]["tot_eff"]),
+                    "Peak_Direction_Theta": float(c["radiation"]["peak_theta"]),
+                    "Peak_Direction_Phi": float(c["radiation"]["peak_phi"]),
+                    "HPBW_Deg": float(c["beam"]["e_hpbw"]),
+                    "Front_To_Back_Ratio_dB": float(c["beam"]["fbr"])
                 },
-                "Provenance": "Raw datasets immutably preserved. Transformations executed via analytical spectral integration.",
-                "Integrity_Hash": hashlib.md5(json.dumps(cal, default=str, sort_keys=True).encode()).hexdigest()
+                "S_Parameters": {
+                    "Resonance_Hz": float(c["s_params"]["f_res"]),
+                    "VSWR": float(c["s_params"]["vswr"]),
+                    "Bandwidth_Hz": float(c["s_params"]["bw_hz"])
+                },
+                "Anomalies": c["anomalies"]
             }
             
             st.json(report)
-            st.download_button("Export Calibration Provenance Report (JSON)", data=json.dumps(report, indent=2), file_name="m34_calibration_report.json", mime="application/json")
+            st.download_button("Export Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="m35_antenna_report.json", mime="application/json")
 
-elif exp_mode not in ["Advanced Antenna Calibration Lab (M34)"]:
-    st.info("Select 'Advanced Antenna Calibration Lab (M34)' to process Raw dataset calibrations and reference offsets.")
+elif exp_mode not in ["Advanced Antenna Characterization (M35)"]:
+    st.info("Select 'Advanced Antenna Characterization (M35)' to run automated Metrology Scorecards and Anomaly Detections.")
+
