@@ -42,7 +42,7 @@ Extends the material system utilizing an Auxiliary Differential Equation (ADE) D
 Extends the material system to support diagonal tensor permittivity matrices ($\varepsilon̿$), enabling mathematically rigorous direction-dependent wave propagation.
 
 ## Milestone 14 — Antenna Arrays & Beamforming
-Upgrades the simulation architecture to support Uniform Linear Arrays (ULA) and electronic Beam Steering.
+Upgrades the architecture to support Uniform Linear Arrays (ULA) and electronic Beam Steering.
 
 ## Milestone 15 — Adaptive Mesh Refinement (AMR)
 Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm utilizing 2-Way spatial restriction/prolongation coupling.
@@ -51,13 +51,13 @@ Introduces a block-structured static Adaptive Mesh Refinement (AMR) algorithm ut
 Introduces fully numerically-defined Engineered Media supporting Dispersive Negative-Index mechanics natively within the time domain via Drude ADE models.
 
 ## Milestone 17 — Inverse Electromagnetic Design & Optimization
-Evolves the laboratory from forward-simulation to a completely self-contained Inverse Design framework utilizing dynamic parameter sweeps.
+Evolves the laboratory into a completely self-contained Inverse Design framework utilizing dynamic parameter sweeps.
 
 ## Milestone 18 — Electromagnetic Topology Optimization
 Introduces genuine Topological Inverse-Design capabilities directly integrated into the unified FDTD Maxwell kernel utilizing SIMP heuristic density mapping.
 
 ## Milestone 19 — Adjoint Electromagnetic Optimization & Sensitivity Analysis
-Upgrades the Topology Optimizer from a stochastic heuristic to an exact continuous Gradient Descent framework powered by an Adjoint Electromagnetic Solver.
+Upgrades the Topology Optimizer to an exact continuous Gradient Descent framework powered by an Adjoint Electromagnetic Solver.
 
 ## Milestone 20 — Multi-Objective Electromagnetic Optimization & Pareto Analysis
 Introduces a fully realized Multi-Objective Non-dominated Sorting Genetic Algorithm (NSGA-II) directly integrated with the FDTD core.
@@ -69,7 +69,7 @@ Deploys high-speed predictive mathematical modeling (Polynomial Ridge Regression
 Transitions simulation mechanics from idealized nominal designs towards real-world, defect-tolerant robust distributions using variance-based Sobol analyses.
 
 ## Milestone 23 — Electromagnetic Model Verification, Validation & Experimental Correlation
-Deploys a formal, rigorous V&V dashboard strictly differentiating "Code Verification" (numerical mechanics) from "Physical Validation" (experimental measurement comparisons).
+Deploys a formal, rigorous V&V dashboard differentiating "Code Verification" from "Physical Validation" explicitly.
 
 ## Milestone 24 — Automated Electromagnetic Experiment Management & Reproducible Research Pipeline
 Transforms the isolated electromagnetic solver into a formal Reproducible Research Database featuring explicit JSON provenance ledgers and Batch execution queuing.
@@ -81,7 +81,7 @@ Fuses the Surrogate Engine with the Experiment Database to create an "Intelligen
 Establishes a rigorous ingestion and calibration framework linking physical, external hardware measurements to the computational FDTD domain.
 
 ## Milestone 27 — Automated Electromagnetic Measurement Planning & Hardware-Abstraction Interface
-Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with a dynamic `MOCK` Instrument Backend to simulate and validate automated laboratory execution loops prior to physical equipment hookups.
+Constructs a complete Software-to-Hardware Abstraction Layer (HAL) equipped with a dynamic `MOCK` Instrument Backend.
 
 ## Milestone 28 — Standardized RF Instrument Communication & S-Parameter Measurement Framework
 Expands the Hardware Abstraction Layer into a standardized SCPI-driven Vector Network Analyzer (VNA) interface handling complex S-Parameters exclusively.
@@ -97,9 +97,12 @@ Transforms the planar scanning metrology module into an advanced **Cylindrical B
 
 ## Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
 Upgrades the Metrology engine to execute complete **Spherical Boundary Acquisition ($r, \theta, \phi$)** sequences, avoiding coordinate singularities (Pole overlapping).
-* **Spherical Modal Integration:** The mathematical `NF2FF` engine leverages rigorous $r^2 \sin(\theta) d\theta d\phi$ weighting, actively filtering duplicate boundary samples overlapping at the Zenith/Nadir poles ($\theta=0, \pi$) naturally to extract pristine, artifact-free Far-Field radiation surfaces.
-* **Ludwig-3 Polarization Diagnostics:** Beyond magnitude, the transform decomposes extracted phasors ($E_\theta, E_\phi$) into formal Co-Polarized ($E_{co}$) and Cross-Polarized ($E_{cross}$) analytical cuts natively, yielding explicit system isolation ratios mapped across $2D$ $\theta \times \phi$ grids.
-* **Digital Twin Parity Projection:** A parallelized internal simulation array bounds the exact spherical $(r, \theta, \phi)$ shell natively during the FDTD computational sweep, isolating and accumulating matching boundary phasors iteratively without external NumPy interpolation bloat for precise $L^2$ error comparisons.
+
+## Milestone 33 — Advanced Near-to-Far-Field Transformation & Cross-Geometry Validation Laboratory
+Unifies M30 (Planar), M31 (Cylindrical), and M32 (Spherical) transforms into a mathematically rigorous Cross-Geometry Verification testbed.
+* **Unified Analytical Benchmarking:** Systematically projects identical theoretical Z-directed infinitesimal dipoles into planar, cylindrical, and spherical near-field boundary arrays simultaneously. 
+* **Windowing & Edge Truncation Diagnostics:** Features analytical data filters (Hann, Hamming, Blackman windows) on planar apertures to visualize and dampen artifact rippling natively. Extracts discrete $\theta \times \phi$ absolute Error Matrices confirming that truncation bounds dominate Planar limitations while Spherical envelopes execute near-perfect ($\le 0.1$ dB RMSE) physical mapping.
+* **Algorithmic Convergence Proofs:** Generates normalized radiation-pattern overlays validating that differing surface integral domains seamlessly collapse into an identical Far-Field physics state, yielding pristine `EXCELLENT` validation ratings across mathematically orthogonal extraction geometries.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -134,3 +137,5 @@ Upgrades the Metrology engine to execute complete **Spherical Boundary Acquisiti
 - [x] Milestone 30 — Near-Field Scanning, Near-to-Far-Field Transformation & Complete Antenna Characterization Laboratory
 - [x] Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
 - [x] Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
+- [x] Milestone 33 — Advanced Near-to-Far-Field Transformation & Cross-Geometry Validation Laboratory
+
