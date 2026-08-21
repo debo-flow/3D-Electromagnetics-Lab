@@ -96,13 +96,16 @@ Solidifies the end-to-end Antenna Metrology framework by uniting a rigorous Plan
 Transforms the planar scanning metrology module into an advanced **Cylindrical Boundary Envelope ($r, \phi, z$)**.
 
 ## Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
-Upgrades the Metrology engine to execute complete **Spherical Boundary Acquisition ($r, \theta, \phi$)** sequences, avoiding coordinate singularities (Pole overlapping).
+Upgrades the Metrology engine to execute complete **Spherical Boundary Acquisition ($r, \theta, \phi$)** sequences, avoiding coordinate singularities.
 
 ## Milestone 33 — Advanced Near-to-Far-Field Transformation & Cross-Geometry Validation Laboratory
-Unifies M30 (Planar), M31 (Cylindrical), and M32 (Spherical) transforms into a mathematically rigorous Cross-Geometry Verification testbed.
-* **Unified Analytical Benchmarking:** Systematically projects identical theoretical Z-directed infinitesimal dipoles into planar, cylindrical, and spherical near-field boundary arrays simultaneously. 
-* **Windowing & Edge Truncation Diagnostics:** Features analytical data filters (Hann, Hamming, Blackman windows) on planar apertures to visualize and dampen artifact rippling natively. Extracts discrete $\theta \times \phi$ absolute Error Matrices confirming that truncation bounds dominate Planar limitations while Spherical envelopes execute near-perfect ($\le 0.1$ dB RMSE) physical mapping.
-* **Algorithmic Convergence Proofs:** Generates normalized radiation-pattern overlays validating that differing surface integral domains seamlessly collapse into an identical Far-Field physics state, yielding pristine `EXCELLENT` validation ratings across mathematically orthogonal extraction geometries.
+Unifies M30, M31, and M32 transforms into a mathematically rigorous Cross-Geometry Verification testbed featuring windowing and truncation diagnostics.
+
+## Milestone 34 — Advanced Antenna Measurement, Calibration & Reference Correction Laboratory
+Institutes a rigorous Metrology Diagnostics and Signal Calibration pipeline ensuring acquired Near-Field datasets undergo strict signal viability verification before transformation.
+* **Complex Instrumentation Calibration:** Formally integrates mathematical correction matrices ($C(f) = A \cdot e^{j\phi}$) shielding the pipeline from localized attenuation or phase discrepancies induced by external hardware anomalies (e.g., cable insertion loss).
+* **Reference Plane Phase Shifting:** Computes spatial offsets deterministically ($\Delta \phi = k_0 d$), mathematically transposing physical measurement planes longitudinally without modifying the immutable raw signal datasets.
+* **Data Quality Diagnostics:** Automatically screens raw spatial phasors for fatal ADC hardware clipping states (Saturation) while deriving real-time Signal-to-Noise Ratios (SNR) to validate the dataset's numerical viability prior to passing into the NF2FF solver.
 
 ## Project Roadmap
 - [x] Milestone 1 — 3D FDTD electromagnetic wave propagation
@@ -138,4 +141,4 @@ Unifies M30 (Planar), M31 (Cylindrical), and M32 (Spherical) transforms into a m
 - [x] Milestone 31 — Cylindrical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
 - [x] Milestone 32 — Spherical Near-Field Scanning & Near-to-Far-Field Transformation Laboratory
 - [x] Milestone 33 — Advanced Near-to-Far-Field Transformation & Cross-Geometry Validation Laboratory
-
+- [x] Milestone 34 — Advanced Antenna Measurement, Calibration & Reference Correction Laboratory
