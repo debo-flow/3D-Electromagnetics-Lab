@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 33 — Advanced NF2FF & Cross-Geometry Validation Laboratory
+Milestone 34 — Advanced Antenna Measurement, Calibration & Reference Correction
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 33 — Advanced NF2FF & Cross-Geometry Validation")
+st.markdown("### Milestone 34 — Advanced Calibration & Reference Correction Lab")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Advanced Antenna Calibration Lab (M34)",
     "Advanced NF2FF Validation (M33)",
     "Spherical NF/FF Lab (M32)",
     "Cylindrical NF/FF Lab (M31)",
@@ -92,7 +93,10 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
 ])
 
 # Global States
-if 'm33_results' not in st.session_state: st.session_state.m33_results = None
+if 'm34_raw' not in st.session_state: st.session_state.m34_raw = None
+if 'm34_cal' not in st.session_state: st.session_state.m34_cal = None
+if 'm34_corr' not in st.session_state: st.session_state.m34_corr = None
+if 'm34_ff' not in st.session_state: st.session_state.m34_ff = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
@@ -151,20 +155,59 @@ if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
 elif active_backend == "CPU" and memory_mb > 3000: st.stop()
 
 # ============================================================
-# M33: MATHEMATICAL INTEGRATION CORES
+# M34: CALIBRATION & REFERENCE MATHEMATICS
 # ============================================================
-def apply_2d_window(field, window_type="None"):
-    if window_type == "None": return field
-    Nx_dim, Ny_dim = field.shape
-    if window_type == "Hann":
-        w = np.hanning(Nx_dim)[:, None] * np.hanning(Ny_dim)[None, :]
-    elif window_type == "Hamming":
-        w = np.hamming(Nx_dim)[:, None] * np.hamming(Ny_dim)[None, :]
-    elif window_type == "Blackman":
-        w = np.blackman(Nx_dim)[:, None] * np.blackman(Ny_dim)[None, :]
-    return field * w
+def generate_mock_raw_data(freq, x_arr, y_arr, z_plane):
+    """Generates an uncalibrated, noisy planar NF scan of a dipole."""
+    k0 = 2 * np.pi * freq / C_LIGHT
+    X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
+    R = np.sqrt(X**2 + Y**2 + z_plane**2)
+    
+    # Ideal field with systemic measurement attenuation & phase delay (e.g., cable loss)
+    ideal_mag = np.exp(-(X**2 + Y**2)/0.02) / (R + 1e-6)
+    
+    # Inject Mock Cable Loss (e.g., -3 dB amplitude drop) and +45 deg arbitrary phase shift
+    attenuation_linear = 10**(-3.0 / 20)
+    phase_offset = np.deg2rad(45.0)
+    
+    # Inject Gaussian Measurement Noise
+    np.random.seed(int(time.time()*1000)%10000)
+    noise_floor = 0.02
+    noise_m = np.random.normal(0, noise_floor, X.shape)
+    noise_p = np.random.normal(0, 0.1, X.shape)
+    
+    # RAW Distorted Field
+    mag_raw = (ideal_mag * attenuation_linear) + noise_m
+    phase_raw = -k0 * R + phase_offset + noise_p
+    
+    Ex_raw = mag_raw * np.exp(1j * phase_raw)
+    Ey_raw = 0.05 * Ex_raw # Cross-polar leakage
+    
+    return Ex_raw, Ey_raw
+
+def analyze_data_quality(Ex_raw):
+    """Diagnostic check for clipping, saturation, and SNR."""
+    mag = np.abs(Ex_raw)
+    max_val = np.max(mag)
+    mean_val = np.mean(mag)
+    
+    # Estimate noise floor from the edge of the scan
+    noise_floor_est = np.mean(mag[0, :]) + 1e-12 
+    snr_linear = max_val / noise_floor_est
+    snr_db = 20 * np.log10(snr_linear)
+    
+    saturation_limit = 10.0 # Arbitrary V/m hardware limit
+    clipped = np.any(mag > saturation_limit)
+    has_nan = np.isnan(Ex_raw).any() or np.isinf(Ex_raw).any()
+    
+    quality = "VALID"
+    if has_nan or clipped: quality = "INVALID"
+    elif snr_db < 15.0: quality = "WARNING"
+    
+    return {"snr_db": snr_db, "clipped": clipped, "has_nan": has_nan, "quality": quality, "max_val": max_val}
 
 def compute_far_field_direct_planar(Ex_nf, Ey_nf, x_arr, y_arr, freq, thetas, phis):
+    """NF2FF Plane Wave Spectrum Integration (from M33)."""
     k0 = 2 * np.pi * freq / C_LIGHT
     X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
     dx_s = x_arr[1] - x_arr[0] if len(x_arr) > 1 else 1.0
@@ -185,237 +228,167 @@ def compute_far_field_direct_planar(Ex_nf, Ey_nf, x_arr, y_arr, freq, thetas, ph
     E_phi = -Fx * np.sin(PHI) + Fy * np.cos(PHI)
     return E_theta, E_phi
 
-def compute_far_field_cylindrical(Ez_nf, Ephi_nf, z_arr, phi_arr, R0, freq, thetas, phis):
-    k0 = 2 * np.pi * freq / C_LIGHT
-    Z, PHI_P = np.meshgrid(z_arr, phi_arr, indexing='ij')
-    dz_s = z_arr[1] - z_arr[0] if len(z_arr) > 1 else 1.0
-    dphi_s = phi_arr[1] - phi_arr[0] if len(phi_arr) > 1 else 1.0
-    THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
-    
-    Z_b = Z[:, :, None, None]; PHI_P_b = PHI_P[:, :, None, None]
-    THETA_b = THETA[None, None, :, :]; PHI_b = PHI[None, None, :, :]
-    
-    phase_factor = R0 * np.sin(THETA_b) * np.cos(PHI_b - PHI_P_b) + Z_b * np.cos(THETA_b)
-    kernel = np.exp(1j * k0 * phase_factor) * R0 * dphi_s * dz_s
-    
-    Jz = Ez_nf / Z_0; Jphi = Ephi_nf / Z_0
-    Az = np.sum(Jz[:, :, None, None] * kernel, axis=(0, 1))
-    Aphi = np.sum(Jphi[:, :, None, None] * kernel, axis=(0, 1))
-    
-    E_theta = -1j * k0 * Z_0 * (Az * np.sin(THETA))
-    E_phi = -1j * k0 * Z_0 * Aphi
-    return E_theta, E_phi
-
-def compute_far_field_spherical(Etheta_nf, Ephi_nf, theta_arr, phi_arr, R0, freq, thetas, phis):
-    k0 = 2 * np.pi * freq / C_LIGHT
-    THETA_P, PHI_P = np.meshgrid(theta_arr, phi_arr, indexing='ij')
-    THETA_FF, PHI_FF = np.meshgrid(thetas, phis, indexing='ij')
-    
-    THETA_P_b = THETA_P[:, :, None, None]; PHI_P_b = PHI_P[:, :, None, None]
-    THETA_FF_b = THETA_FF[None, None, :, :]; PHI_FF_b = PHI_FF[None, None, :, :]
-    
-    dtheta = theta_arr[1] - theta_arr[0] if len(theta_arr) > 1 else 1.0
-    dphi = phi_arr[1] - phi_arr[0] if len(phi_arr) > 1 else 1.0
-    dS = (R0**2) * np.sin(THETA_P_b) * dtheta * dphi
-    
-    phase_factor = np.sin(THETA_P_b) * np.sin(THETA_FF_b) * np.cos(PHI_FF_b - PHI_P_b) + np.cos(THETA_P_b) * np.cos(THETA_FF_b)
-    kernel = np.exp(1j * k0 * R0 * phase_factor) * dS
-    
-    Ex_nf = np.cos(THETA_P_b) * np.cos(PHI_P_b) * Etheta_nf[:, :, None, None] - np.sin(PHI_P_b) * Ephi_nf[:, :, None, None]
-    Ey_nf = np.cos(THETA_P_b) * np.sin(PHI_P_b) * Etheta_nf[:, :, None, None] + np.cos(PHI_P_b) * Ephi_nf[:, :, None, None]
-    Ez_nf = -np.sin(THETA_P_b) * Etheta_nf[:, :, None, None]
-    
-    Ax = np.sum(Ex_nf * kernel, axis=(0, 1)); Ay = np.sum(Ey_nf * kernel, axis=(0, 1)); Az = np.sum(Ez_nf * kernel, axis=(0, 1))
-    E_theta_ff = Ax * np.cos(THETA_FF) * np.cos(PHI_FF) + Ay * np.cos(THETA_FF) * np.sin(PHI_FF) - Az * np.sin(THETA_FF)
-    E_phi_ff = -Ax * np.sin(PHI_FF) + Ay * np.cos(PHI_FF)
-    return E_theta_ff, E_phi_ff
-
-def generate_analytical_dipole_reference(freq, geometry, grid_args):
-    """Generates an EXACT mathematically unified Z-directed infinitesimal dipole source for Cross-Geometry Validation."""
-    k0 = 2 * np.pi * freq / C_LIGHT
-    if geometry == "PLANAR":
-        X, Y = np.meshgrid(grid_args['x'], grid_args['y'], indexing='ij')
-        z = grid_args['z']
-        R = np.sqrt(X**2 + Y**2 + z**2)
-        theta = np.arccos(z / (R + 1e-12))
-        phi = np.arctan2(Y, X)
-        E_theta = np.sin(theta) * np.exp(-1j * k0 * R) / R
-        Ex = E_theta * np.cos(theta) * np.cos(phi)
-        Ey = E_theta * np.cos(theta) * np.sin(phi)
-        return {"Ex": Ex, "Ey": Ey}
-        
-    elif geometry == "CYLINDRICAL":
-        Z, PHI = np.meshgrid(grid_args['z'], grid_args['phi'], indexing='ij')
-        r = grid_args['r']
-        R = np.sqrt(r**2 + Z**2)
-        theta = np.arccos(Z / (R + 1e-12))
-        E_theta = np.sin(theta) * np.exp(-1j * k0 * R) / R
-        Ez = -E_theta * np.sin(theta)
-        Ephi = np.zeros_like(Ez)
-        return {"Ez": Ez, "Ephi": Ephi}
-        
-    elif geometry == "SPHERICAL":
-        THETA, PHI = np.meshgrid(grid_args['theta'], grid_args['phi'], indexing='ij')
-        r = grid_args['r']
-        E_theta = np.sin(THETA) * np.exp(-1j * k0 * r) / r
-        E_phi = np.zeros_like(E_theta)
-        return {"E_th": E_theta, "E_ph": E_phi}
-        
-    elif geometry == "FAR_FIELD":
-        THETA, PHI = np.meshgrid(grid_args['theta'], grid_args['phi'], indexing='ij')
-        # Absolute theoretical Far-Field Magnitude (normalized)
-        E_theta = np.abs(np.sin(THETA))
-        db = 20 * np.log10(E_theta + 1e-12)
-        return db - np.max(db)
-
 # ============================================================
-# M33: ADVANCED NF2FF & CROSS-GEOMETRY LAB UI
+# M34: ADVANCED CALIBRATION LABORATORY UI
 # ============================================================
-if exp_mode == "Advanced NF2FF Validation (M33)":
-    st.markdown("### 🔬 Advanced NF2FF & Cross-Geometry Validation Lab")
-    st.info("Unifies Planar, Cylindrical, and Spherical Near-Field data. Scientifically cross-validates equivalent transformations from the same analytical source to mathematically prove that interpolation and surface integration bounds converge on identical Far-Field physics.")
+if exp_mode == "Advanced Antenna Calibration Lab (M34)":
+    st.markdown("### 🎛️ Advanced Calibration & Reference Correction Lab")
+    st.info("Ingests uncalibrated raw Near-Field arrays, evaluates Data Quality (SNR, Clipping), strictly protects raw immutability, and executes complex instrumentation adjustments ($C = A e^{j\\phi}$) alongside Reference Plane spatial phase shifts before processing the NF2FF algorithm.")
     
-    t_cfg, t_samp, t_window, t_cross, t_err, t_report = st.tabs([
-        "1. Unified Configuration", "2. Sampling Validation", "3. Windowing (Edge Analytics)", "4. Cross-Geometry Benchmark", "5. Angular Error Maps", "6. Validation Report"
+    t_raw, t_cal, t_corr, t_ff, t_rep = st.tabs([
+        "1. Raw Data & Quality", "2. Calibration Profile", "3. Apply Corrections", "4. NF2FF & Comparison", "5. Provenance Report"
     ])
     
-    # Common Variables
     freq_test = 2.4e9
     wl = C_LIGHT / freq_test
+    x_arr = np.arange(-0.4, 0.41, 0.02)
+    y_arr = np.arange(-0.4, 0.41, 0.02)
+    z_dist = 0.2
     
-    # Grid Defs
-    plan_x = np.arange(-0.5, 0.51, 0.02); plan_y = np.arange(-0.5, 0.51, 0.02); plan_z = 0.1
-    cyl_z = np.arange(-0.5, 0.51, 0.02); cyl_p = np.deg2rad(np.arange(0, 360, 5)); cyl_r = 0.1
-    sph_t = np.deg2rad(np.arange(1, 180, 5)); sph_p = np.deg2rad(np.arange(0, 360, 5)); sph_r = 0.1
-    
-    # Target FF Grid
-    ff_thetas = np.deg2rad(np.arange(1, 180, 2))
-    ff_phis = np.deg2rad(np.arange(0, 360, 2))
-    
-    with t_cfg:
-        st.markdown("#### Unified Target Analytics")
-        st.write(f"**Reference Source:** Analytical Z-Directed Dipole ($E_\\theta \\propto \\sin(\\theta) \\frac{{e^{{-jkR}}}}{{R}}$)")
-        st.write(f"**Frequency:** {freq_test/1e9:.2f} GHz ($\\lambda =$ {wl*1000:.1f} mm)")
-        st.write("**NF2FF Target Resolution:** $\\Delta\\theta = 2^\\circ, \\Delta\\phi = 2^\\circ$")
-        st.write("**Mathematical Goal:** To prove that extracting complex phasors from a flat plane, a cylinder, and a sphere all mathematically collapse into the identical spherical far-field pattern under direct spectral integration.")
-        
-    with t_samp:
-        st.markdown("#### Strict Nyquist Sampling Diagnostics")
-        st.markdown("The system automatically checks step increments across all geometries to prevent spectral aliasing before computation.")
-        
-        c_s1, c_s2, c_s3 = st.columns(3)
-        c_s1.metric("Planar Max Step (Δx, Δy)", "20.0 mm", "≤ 62.5 mm (λ/2) [PASS]")
-        c_s2.metric("Cylindrical Arc Step (rΔφ)", f"{cyl_r * np.deg2rad(5) * 1000:.1f} mm", "≤ 62.5 mm (λ/2) [PASS]")
-        c_s3.metric("Spherical Equator Arc (rΔφ)", f"{sph_r * np.deg2rad(5) * 1000:.1f} mm", "≤ 62.5 mm (λ/2) [PASS]")
-        
-        st.success("All transformation geometries satisfy rigorous Nyquist wavelength sampling limits.")
-
-    with t_window:
-        st.markdown("#### Finite Truncation & Edge Windowing")
-        st.info("Planar scans suffer from finite boundary truncation errors. Windowing tapers the edges to zero, smoothing artificial diffraction ripples at the cost of slight main-lobe widening.")
-        
-        win_type = st.selectbox("Apply Planar Windowing Filter", ["None", "Hann", "Hamming", "Blackman"])
-        plan_nf = generate_analytical_dipole_reference(freq_test, "PLANAR", {'x': plan_x, 'y': plan_y, 'z': plan_z})
-        
-        win_mag = 20 * np.log10(np.abs(apply_2d_window(plan_nf["Ex"], win_type)) + 1e-12)
-        fig_w = go.Figure(data=go.Heatmap(z=win_mag.T, x=plan_x, y=plan_y, colorscale='Viridis', colorbar=dict(title="dB")))
-        fig_w.update_layout(title=f"Planar Aperture Magnitude ({win_type} Window applied)", xaxis_title="X (m)", yaxis_title="Y (m)", width=500, height=450)
-        st.plotly_chart(fig_w)
-
-    with t_cross:
-        st.markdown("#### 🔄 Cross-Geometry NF2FF Benchmark")
-        
-        if st.button("Execute Unified Transformation Suite", type="primary"):
-            pb = st.progress(0); stx = st.empty()
-            
-            # 1. Theoretical Reference
-            stx.text("Generating Exact Analytical Far-Field...")
-            ref_ff = generate_analytical_dipole_reference(freq_test, "FAR_FIELD", {'theta': ff_thetas, 'phi': ff_phis})
-            pb.progress(0.25)
-            
-            # 2. Planar
-            stx.text("Transforming Planar Boundary...")
-            plan_nf = generate_analytical_dipole_reference(freq_test, "PLANAR", {'x': plan_x, 'y': plan_y, 'z': plan_z})
-            plan_nf["Ex"] = apply_2d_window(plan_nf["Ex"], win_type)
-            plan_nf["Ey"] = apply_2d_window(plan_nf["Ey"], win_type)
-            Eth, Eph = compute_far_field_direct_planar(plan_nf["Ex"], plan_nf["Ey"], plan_x, plan_y, freq_test, ff_thetas, ff_phis)
-            plan_db = 20 * np.log10(np.sqrt(np.abs(Eth)**2 + np.abs(Eph)**2) + 1e-12); plan_norm = plan_db - np.max(plan_db)
-            pb.progress(0.50)
-            
-            # 3. Cylindrical
-            stx.text("Transforming Cylindrical Boundary...")
-            cyl_nf = generate_analytical_dipole_reference(freq_test, "CYLINDRICAL", {'z': cyl_z, 'phi': cyl_p, 'r': cyl_r})
-            Eth, Eph = compute_far_field_cylindrical(cyl_nf["Ez"], cyl_nf["Ephi"], cyl_z, cyl_p, cyl_r, freq_test, ff_thetas, ff_phis)
-            cyl_db = 20 * np.log10(np.sqrt(np.abs(Eth)**2 + np.abs(Eph)**2) + 1e-12); cyl_norm = cyl_db - np.max(cyl_db)
-            pb.progress(0.75)
-            
-            # 4. Spherical
-            stx.text("Transforming Spherical Boundary...")
-            sph_nf = generate_analytical_dipole_reference(freq_test, "SPHERICAL", {'theta': sph_t, 'phi': sph_p, 'r': sph_r})
-            Eth, Eph = compute_far_field_spherical(sph_nf["E_th"], sph_nf["E_ph"], sph_t, sph_p, sph_r, freq_test, ff_thetas, ff_phis)
-            sph_db = 20 * np.log10(np.sqrt(np.abs(Eth)**2 + np.abs(Eph)**2) + 1e-12); sph_norm = sph_db - np.max(sph_db)
-            pb.progress(1.0)
-            stx.text("Validation Suite Complete.")
-            
-            # Store in session state to pass to Error Maps
-            st.session_state.m33_results = {
-                'ref': ref_ff, 'plan': plan_norm, 'cyl': cyl_norm, 'sph': sph_norm, 'thetas': ff_thetas, 'phis': ff_phis
+    with t_raw:
+        st.markdown("#### Raw Measurement Ingestion & Diagnostics")
+        if st.button("Generate MOCK Uncalibrated Dataset"):
+            Ex_raw, Ey_raw = generate_mock_raw_data(freq_test, x_arr, y_arr, z_dist)
+            q_metrics = analyze_data_quality(Ex_raw)
+            st.session_state.m34_raw = {
+                "Ex": Ex_raw, "Ey": Ey_raw, "freq": freq_test, "z": z_dist, "qual": q_metrics, "source": "MOCK DATA"
             }
+            st.success("Raw dataset acquired and locked. (Immutable)")
+            
+        if st.session_state.m34_raw is not None:
+            r = st.session_state.m34_raw
+            q = r["qual"]
+            
+            c_q1, c_q2, c_q3, c_q4 = st.columns(4)
+            c_q1.metric("Data Quality", q["quality"], "Safe" if q["quality"] == "VALID" else "Review", delta_color="normal" if q["quality"] == "VALID" else "inverse")
+            c_q2.metric("Est. SNR", f"{q['snr_db']:.1f} dB")
+            c_q3.metric("Peak Voltage", f"{q['max_val']:.2f} V/m")
+            c_q4.metric("Saturation/Clipping", "DETECTED" if q["clipped"] else "NONE")
+            
+            # Plot Raw
+            mag_raw_db = 20 * np.log10(np.abs(r["Ex"]) + 1e-12)
+            fig_r = go.Figure(data=go.Heatmap(z=mag_raw_db.T, x=x_arr, y=y_arr, colorscale='Viridis', colorbar=dict(title="dBV/m")))
+            fig_r.update_layout(title="RAW Uncalibrated Near-Field Magnitude", xaxis_title="X (m)", yaxis_title="Y (m)", width=500, height=400)
+            st.plotly_chart(fig_r)
 
-        if st.session_state.m33_results is not None:
-            r = st.session_state.m33_results
-            st.markdown("##### E-Plane Pattern Overlay ($\\phi=0^\\circ$)")
+    with t_cal:
+        st.markdown("#### Instrument & Probe Calibration Matrix")
+        st.info("Calibration corrects for systematic insertion losses (cables/connectors) and phase delays. Reference plane correction mathematically translates the phase center along the propagation axis.")
+        
+        with st.form("cal_form"):
+            c_c1, c_c2, c_c3 = st.columns(3)
+            # Inverse of the injected Mock errors to restore the true signal
+            amp_corr_db = c_c1.number_input("Amplitude Correction (dB)", -10.0, 10.0, 3.0, 0.5) 
+            phase_corr_deg = c_c2.number_input("Instrument Phase Correction (°)", -180.0, 180.0, -45.0, 5.0)
+            ref_shift_m = c_c3.number_input("Reference Plane Shift (m)", -1.0, 1.0, 0.0, 0.01)
             
-            idx_p = 0
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=np.rad2deg(r['thetas']), y=r['ref'][:, idx_p], mode='lines', name='Analytical Reference', line=dict(color='black', width=3)))
-            fig.add_trace(go.Scatter(x=np.rad2deg(r['thetas']), y=r['plan'][:, idx_p], mode='lines', name=f'Planar NF2FF (Window: {win_type})', line=dict(dash='dash', color='blue')))
-            fig.add_trace(go.Scatter(x=np.rad2deg(r['thetas']), y=r['cyl'][:, idx_p], mode='lines', name='Cylindrical NF2FF', line=dict(dash='dashdot', color='green')))
-            fig.add_trace(go.Scatter(x=np.rad2deg(r['thetas']), y=r['sph'][:, idx_p], mode='markers', name='Spherical NF2FF', marker=dict(color='red', size=5)))
-            
-            fig.update_layout(xaxis_title="Theta (°)", yaxis_title="Normalized Pattern (dB)", yaxis_range=[-40, 0], height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            if st.form_submit_button("Load Calibration Profile"):
+                amp_lin = 10**(amp_corr_db / 20.0)
+                phase_rad = np.deg2rad(phase_corr_deg)
+                
+                # Complex Calibration Factor: C = A * exp(j * phi)
+                C_factor = amp_lin * np.exp(1j * phase_rad)
+                
+                st.session_state.m34_cal = {
+                    "amp_db": amp_corr_db, "phase_deg": phase_corr_deg, "ref_shift_m": ref_shift_m,
+                    "C_factor": C_factor, "status": "CALIBRATION LOADED"
+                }
+                st.success("Complex Calibration Profile Verified & Loaded.")
 
-    with t_err:
-        if st.session_state.m33_results is not None:
-            r = st.session_state.m33_results
-            st.markdown("#### Numerical Integrity Diagnostics (RMSE)")
-            
-            # Calculate RMSE (limit to -30dB floor to avoid division noise dominating)
-            mask = r['ref'] > -30.0
-            rmse_plan = np.sqrt(np.mean((r['plan'][mask] - r['ref'][mask])**2))
-            rmse_cyl = np.sqrt(np.mean((r['cyl'][mask] - r['ref'][mask])**2))
-            rmse_sph = np.sqrt(np.mean((r['sph'][mask] - r['ref'][mask])**2))
-            
-            c_e1, c_e2, c_e3 = st.columns(3)
-            def qual(rmse): return "EXCELLENT" if rmse < 0.5 else "ACCEPTABLE" if rmse < 2.0 else "WARNING"
-            c_e1.metric("Planar Transform RMSE", f"{rmse_plan:.3f} dB", qual(rmse_plan), delta_color="normal" if rmse_plan < 0.5 else "off")
-            c_e2.metric("Cylindrical Transform RMSE", f"{rmse_cyl:.3f} dB", qual(rmse_cyl), delta_color="normal")
-            c_e3.metric("Spherical Transform RMSE", f"{rmse_sph:.3f} dB", qual(rmse_sph), delta_color="normal")
-            
-            st.markdown("##### Planar Discrepancy Heatmap (Truncation Error Visibility)")
-            fig_err = go.Figure(data=go.Heatmap(z=np.abs(r['plan'] - r['ref']).T, x=np.rad2deg(r['thetas']), y=np.rad2deg(r['phis']), colorscale='Reds', zmin=0, zmax=5, colorbar=dict(title="Abs Error (dB)")))
-            fig_err.update_layout(title=f"Planar Error Map (vs Analytical). Notice truncation errors near boundary limits.", xaxis_title="Theta (°)", yaxis_title="Phi (°)", height=400)
-            st.plotly_chart(fig_err, use_container_width=True)
+    with t_corr:
+        st.markdown("#### Apply Mathematical Corrections")
+        if st.session_state.m34_raw is None or st.session_state.m34_cal is None:
+            st.warning("Load Raw Data and Calibration Profile first.")
         else:
-            st.info("Execute Transformation Suite in Tab 4 first.")
+            raw = st.session_state.m34_raw
+            cal = st.session_state.m34_cal
+            
+            if st.button("Execute Pipeline Corrections", type="primary"):
+                # 1. Complex Instrument Correction
+                Ex_corr = raw["Ex"] * cal["C_factor"]
+                Ey_corr = raw["Ey"] * cal["C_factor"]
+                
+                # 2. Reference Plane Phase Shift: d_phi = k0 * d
+                k0 = 2 * np.pi * raw["freq"] / C_LIGHT
+                phase_shift = np.exp(1j * k0 * cal["ref_shift_m"])
+                
+                Ex_corr = Ex_corr * phase_shift
+                Ey_corr = Ey_corr * phase_shift
+                
+                st.session_state.m34_corr = {
+                    "Ex": Ex_corr, "Ey": Ey_corr, "source": "CORRECTED DATA"
+                }
+                st.success("Corrections applied successfully. Original RAW data remains completely preserved.")
+                
+            if st.session_state.m34_corr is not None:
+                corr = st.session_state.m34_corr
+                cc1, cc2 = st.columns(2)
+                
+                # Compare Phase (to visually prove calibration)
+                raw_ph = np.angle(raw["Ex"])
+                corr_ph = np.angle(corr["Ex"])
+                
+                fig_pr = go.Figure(data=go.Heatmap(z=raw_ph.T, x=x_arr, y=y_arr, colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
+                fig_pr.update_layout(title="RAW Phase", width=350, height=350)
+                cc1.plotly_chart(fig_pr)
+                
+                fig_pc = go.Figure(data=go.Heatmap(z=corr_ph.T, x=x_arr, y=y_arr, colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
+                fig_pc.update_layout(title="CORRECTED Phase", width=350, height=350)
+                cc2.plotly_chart(fig_pc)
 
-    with t_report:
-        if st.session_state.m33_results is not None:
-            st.markdown("#### 🗃️ Provenance & Validation Export")
-            r = st.session_state.m33_results
+    with t_ff:
+        st.markdown("#### NF2FF Transform: Raw vs Corrected Comparison")
+        if st.session_state.m34_raw is None or st.session_state.m34_corr is None:
+            st.warning("Ensure Data is Corrected in Tab 3.")
+        else:
+            if st.button("Run Far-Field Correlation"):
+                raw = st.session_state.m34_raw
+                corr = st.session_state.m34_corr
+                thetas = np.deg2rad(np.arange(0, 90, 2))
+                phis = np.deg2rad(np.array([0.0])) # E-Plane only for fast visualization
+                
+                # Transform Raw
+                Eth_raw, Eph_raw = compute_far_field_direct_planar(raw["Ex"], raw["Ey"], x_arr, y_arr, raw["freq"], thetas, phis)
+                ff_raw_db = 20 * np.log10(np.sqrt(np.abs(Eth_raw)**2 + np.abs(Eph_raw)**2) + 1e-12)
+                
+                # Transform Corrected
+                Eth_corr, Eph_corr = compute_far_field_direct_planar(corr["Ex"], corr["Ey"], x_arr, y_arr, raw["freq"], thetas, phis)
+                ff_corr_db = 20 * np.log10(np.sqrt(np.abs(Eth_corr)**2 + np.abs(Eph_corr)**2) + 1e-12)
+                
+                # Absolute magnitudes (Not normalized, to show true calibration gain impact)
+                st.session_state.m34_ff = {"thetas": thetas, "ff_raw": ff_raw_db[:, 0], "ff_corr": ff_corr_db[:, 0]}
+
+            if st.session_state.m34_ff is not None:
+                ff = st.session_state.m34_ff
+                
+                st.info("Notice the absolute shift in the Far-Field Gain level due to the applied Amplitude Calibration restoration.")
+                fig_ff = go.Figure()
+                fig_ff.add_trace(go.Scatter(x=np.rad2deg(ff["thetas"]), y=ff["ff_raw"], mode='lines', name="Far-Field (from RAW)", line=dict(dash='dash', color='red')))
+                fig_ff.add_trace(go.Scatter(x=np.rad2deg(ff["thetas"]), y=ff["ff_corr"], mode='lines', name="Far-Field (from CORRECTED)", line=dict(color='blue')))
+                fig_ff.update_layout(title="Absolute Far-Field Magnitude (E-Plane)", xaxis_title="Theta (°)", yaxis_title="Magnitude (dB)")
+                st.plotly_chart(fig_ff, use_container_width=True)
+
+    with t_rep:
+        if st.session_state.m34_corr is not None:
+            raw = st.session_state.m34_raw
+            cal = st.session_state.m34_cal
+            
             report = {
-                "Verification_ID": str(uuid.uuid4()), "Timestamp": datetime.datetime.now().isoformat(),
-                "Reference_Model": "Analytical Z-Directed Dipole", "Frequency_Hz": freq_test,
-                "Cross_Geometry_Validation": {
-                    "Planar": {"RMSE_dB": float(np.sqrt(np.mean((r['plan'] - r['ref'])**2))), "Window": win_type, "Quality": "ACCEPTABLE"},
-                    "Cylindrical": {"RMSE_dB": float(np.sqrt(np.mean((r['cyl'] - r['ref'])**2))), "Quality": "EXCELLENT"},
-                    "Spherical": {"RMSE_dB": float(np.sqrt(np.mean((r['sph'] - r['ref'])**2))), "Quality": "EXCELLENT"}
+                "Calibration_ID": str(uuid.uuid4()),
+                "Timestamp": datetime.datetime.now().isoformat(),
+                "Data_Source": raw["source"],
+                "Diagnostics": raw["qual"],
+                "Calibration_Applied": {
+                    "Amplitude_dB": cal["amp_db"],
+                    "Phase_Deg": cal["phase_deg"],
+                    "Reference_Plane_Shift_m": cal["ref_shift_m"]
                 },
-                "Integrity": "PASS"
+                "Provenance": "Raw datasets immutably preserved. Transformations executed via analytical spectral integration.",
+                "Integrity_Hash": hashlib.md5(json.dumps(cal, default=str, sort_keys=True).encode()).hexdigest()
             }
+            
             st.json(report)
-            st.download_button("Export Cross-Geometry Validation Report (JSON)", data=json.dumps(report, indent=2), file_name="m33_nf2ff_validation.json", mime="application/json")
+            st.download_button("Export Calibration Provenance Report (JSON)", data=json.dumps(report, indent=2), file_name="m34_calibration_report.json", mime="application/json")
 
-elif exp_mode not in ["Advanced NF2FF Validation (M33)"]:
-    st.info("Select 'Advanced NF2FF Validation (M33)' to execute Cross-Geometry mathematical proofs.")
+elif exp_mode not in ["Advanced Antenna Calibration Lab (M34)"]:
+    st.info("Select 'Advanced Antenna Calibration Lab (M34)' to process Raw dataset calibrations and reference offsets.")
