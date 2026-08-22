@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 37 — Advanced Phased-Array Beamforming & Adaptive Beam Control Laboratory
+Milestone 38 — Advanced MIMO & Multi-Antenna Electromagnetic Channel Modeling Laboratory
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 37 — Advanced Phased-Array Beamforming & Adaptive Control")
+st.markdown("### Milestone 38 — Advanced MIMO & Electromagnetic Channel Laboratory")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Advanced MIMO Channel Lab (M38)",
     "Advanced Beamforming Lab (M37)",
     "Advanced Antenna Array Lab (M36)",
     "Advanced Antenna Characterization (M35)",
@@ -94,16 +95,15 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
     "Single Antenna (Dipole/Patch)"
 ])
 
-# Global States
-if 'm37_array' not in st.session_state: st.session_state.m37_array = None
-if 'm37_weights' not in st.session_state: st.session_state.m37_weights = None
+if 'm38_channel' not in st.session_state: st.session_state.m38_channel = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
 Nx = Ny = Nz = 40 if exp_mode not in ["Single Antenna (Dipole/Patch)"] else 80
-if exp_mode in ["Advanced Antenna Array Lab (M36)", "Advanced Beamforming Lab (M37)"]: Nx = Ny = 60; Nz = 40 
+if exp_mode in ["Advanced Antenna Array Lab (M36)", "Advanced Beamforming Lab (M37)", "Advanced MIMO Channel Lab (M38)"]: 
+    Nx = Ny = 60; Nz = 40 
 dx = dy = dz = 0.005 
 
 cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
@@ -155,304 +155,358 @@ st.sidebar.markdown(f"**Est. Memory Req:** `{memory_mb:.2f} MB`")
 if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
 elif active_backend == "CPU" and memory_mb > 3000: st.stop()
 
-# ============================================================
-# M36/37: ARRAY MATH & ADVANCED BEAMFORMING KERNELS
-# ============================================================
-def generate_array_geometry(geom_type, num_el, spacing_x, spacing_y, freq):
-    pos = np.zeros((num_el, 3)); wl = C_LIGHT / freq
-    dx_m = spacing_x * wl; dy_m = spacing_y * wl
-    
-    if geom_type == "Uniform Linear Array (ULA)":
-        for i in range(num_el): pos[i, 0] = (i - (num_el-1)/2.0) * dx_m
-    elif geom_type == "Planar Rectangular Array (UPA)":
-        side = int(np.ceil(np.sqrt(num_el)))
-        for i in range(num_el):
-            row = i // side; col = i % side
-            pos[i, 0] = (col - (side-1)/2.0) * dx_m; pos[i, 1] = (row - (side-1)/2.0) * dy_m
-    elif geom_type == "Uniform Circular Array (UCA)":
-        radius = dx_m * num_el / (2 * np.pi) if num_el > 1 else dx_m
-        for i in range(num_el):
-            angle = i * (2 * np.pi / num_el)
-            pos[i, 0] = radius * np.cos(angle); pos[i, 1] = radius * np.sin(angle)
-    return pos
-
-def compute_steering_vector(pos, freq, theta_rad, phi_rad):
-    k0 = 2 * np.pi * freq / C_LIGHT
-    rx = np.sin(theta_rad) * np.cos(phi_rad)
-    ry = np.sin(theta_rad) * np.sin(phi_rad)
-    rz = np.cos(theta_rad)
-    # v_n = exp(j * k * r_n . r_hat)
-    return np.exp(1j * k0 * (pos[:, 0]*rx + pos[:, 1]*ry + pos[:, 2]*rz))
-
-def compute_adaptive_null_weights(pos, freq, t_th, t_ph, nulls):
-    """Computes exact complex weights utilizing a mathematical orthogonal projection matrix to force deep nulls."""
-    v_tgt = compute_steering_vector(pos, freq, np.deg2rad(t_th), np.deg2rad(t_ph))
-    if not nulls: return np.conj(v_tgt) # Standard phase steering
-    
-    N = len(pos)
-    C = np.zeros((N, len(nulls)), dtype=np.complex128)
-    for i, (n_th, n_ph) in enumerate(nulls):
-        C[:, i] = compute_steering_vector(pos, freq, np.deg2rad(n_th), np.deg2rad(n_ph))
-    
-    # Projection Matrix P = I - C(C^H C)^-1 C^H
-    CH_C = np.conj(C.T) @ C
-    CH_C_inv = np.linalg.pinv(CH_C) # Pseudo-inverse for numerical stability
-    P = np.eye(N) - C @ CH_C_inv @ np.conj(C.T)
-    
-    # Project the target steering vector onto the null orthogonal complement
-    w_opt = P @ np.conj(v_tgt)
-    # Normalize weights so max amplitude is 1.0
-    return w_opt / (np.max(np.abs(w_opt)) + 1e-12)
-
-def quantize_weights(w_complex, amp_bits, phase_bits):
-    """Simulates hardware limitations in digital phase shifters and variable gain amplifiers."""
-    amps = np.abs(w_complex)
-    phases = np.angle(w_complex)
-    
-    if amp_bits > 0:
-        levels = (2**amp_bits) - 1
-        amps = np.round(amps * levels) / levels
-        
-    if phase_bits > 0:
-        step = 2 * np.pi / (2**phase_bits)
-        phases = np.round(phases / step) * step
-        
-    return amps * np.exp(1j * phases)
-
-def apply_weight_errors(w_complex, amp_err_std, phase_err_std_deg):
-    """Injects statistical Monte Carlo Gaussian variance into the weight vectors."""
-    amps = np.abs(w_complex); phases = np.angle(w_complex)
-    amps_noisy = np.clip(amps + np.random.normal(0, amp_err_std, len(amps)), 0.0, 1.0)
-    phases_noisy = phases + np.random.normal(0, np.deg2rad(phase_err_std_deg), len(phases))
-    return amps_noisy * np.exp(1j * phases_noisy)
-
-def compute_array_factor_complex(theta_arr, phi_arr, pos, w_complex, freq):
-    """Analytically computes the 3D Array Factor using the assembled complex weight vector."""
-    k0 = 2 * np.pi * freq / C_LIGHT
-    THETA, PHI = np.meshgrid(theta_arr, phi_arr, indexing='ij')
-    rx = np.sin(THETA) * np.cos(PHI); ry = np.sin(THETA) * np.sin(PHI); rz = np.cos(THETA)
-    
-    AF = np.zeros_like(THETA, dtype=np.complex128)
-    for n in range(len(w_complex)):
-        phase_term = k0 * (pos[n, 0]*rx + pos[n, 1]*ry + pos[n, 2]*rz)
-        AF += w_complex[n] * np.exp(1j * phase_term)
-    return AF
-
-def generate_mock_s_matrix(num_el, spacing_wl):
-    S = np.zeros((num_el, num_el), dtype=np.complex128)
-    for i in range(num_el):
-        for j in range(num_el):
-            if i == j: S[i, i] = 10**(-15/20) * np.exp(-1j * np.pi/4) 
-            else:
-                dist = abs(i - j) * spacing_wl
-                mag = 10**(-20/20) * np.exp(-dist * 1.5)
-                phase = -2 * np.pi * dist
-                S[i, j] = mag * np.exp(1j * phase)
-    return S
-
-def calculate_active_vswr(w_complex, S_matrix):
-    N = len(w_complex)
-    gamma_active = np.zeros(N, dtype=np.complex128)
+def compute_cpml(N, d_pml, delta, step_dt, m=3, R_err=1e-4, alpha_max=0.05):
+    b_e = np.zeros(N, dtype=dtype_np); c_e = np.zeros(N, dtype=dtype_np); b_h = np.zeros(N, dtype=dtype_np); c_h = np.zeros(N, dtype=dtype_np)
+    sigma_max = - (m + 1) * math.log(R_err) / (2.0 * Z_0 * (d_pml * delta)) if d_pml > 0 else 0
     for i in range(N):
-        if np.abs(w_complex[i]) < 1e-12: continue
-        coupling_sum = 0j
-        for j in range(N): coupling_sum += S_matrix[i, j] * w_complex[j]
-        gamma_active[i] = coupling_sum / w_complex[i]
-    vswr_active = (1 + np.abs(gamma_active)) / (1 - np.abs(gamma_active) + 1e-12)
-    return vswr_active
+        if d_pml == 0: continue
+        d_e = (d_pml - i)*delta if i < d_pml else (i - (N - 1 - d_pml))*delta if i > N - 1 - d_pml else 0.0
+        d_h = (d_pml - i - 0.5)*delta if i < d_pml else (i + 0.5 - (N - 1 - d_pml))*delta if i > N - 2 - d_pml else 0.0
+        d_h = max(0.0, d_h)
+        if d_e > 0:
+            s_e = sigma_max * (d_e / (d_pml * delta))**m; a_e = alpha_max * (1.0 - d_e / (d_pml * delta))**m
+            b_e[i] = math.exp(-(s_e + a_e * EPS_0 / step_dt) * (step_dt / EPS_0)); c_e[i] = s_e / (s_e + a_e * EPS_0 / step_dt) * (b_e[i] - 1.0) / delta
+        if d_h > 0:
+            s_h = sigma_max * (d_h / (d_pml * delta))**m; a_h = alpha_max * (1.0 - d_h / (d_pml * delta))**m
+            b_h[i] = math.exp(-(s_h + a_h * EPS_0 / step_dt) * (step_dt / EPS_0)); c_h[i] = s_h / (s_h + a_h * EPS_0 / step_dt) * (b_h[i] - 1.0) / delta
+    return b_e, c_e, b_h, c_h
+
+b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
 
 # ============================================================
-# M37: ADVANCED PHASED-ARRAY BEAMFORMING LABORATORY UI
+# CORE FDTD SOLVER (PRESERVED)
 # ============================================================
-if exp_mode == "Advanced Beamforming Lab (M37)":
-    st.markdown("### 📡 Advanced Phased-Array Beamforming & Adaptive Control")
-    st.info("Implements exact mathematical Orthogonal Projections to steer deep interference Nulls dynamically. Features hardware Quantization limits (N-bit Phase Shifters), Active VSWR mutual coupling analysis, and Monte Carlo Robustness error injection to certify beam survivability under structural degradation.")
+@nb.njit(cache=True)
+def run_simulation_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
+                       ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
+                       num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, obs_pts):
+
+    Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    Px = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Py = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Pz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_ey_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_ex_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ex_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ey_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
-    t_cfg, t_beam, t_scan, t_mc, t_rep = st.tabs([
-        "1. Array & Target Config", "2. Adaptive Null Steering", "3. Scan Loss Analytics", "4. Monte Carlo Robustness", "5. Provenance Report"
+    omega = 2.0 * np.pi * freq_hz
+    accum_steps = steps // 2 
+    obs_phasors = np.zeros(obs_pts.shape[0], dtype=np.complex128)
+
+    for n in range(steps):
+        t_steps = float(n)
+        for i in range(Nx - 1):
+            for j in range(Ny - 1):
+                for k in range(Nz - 1):
+                    dEz_dy = Ez[i, j+1, k] - Ez[i, j, k]; dEy_dz = Ey[i, j, k+1] - Ey[i, j, k]; dEx_dz = Ex[i, j, k+1] - Ex[i, j, k]
+                    dEz_dx = Ez[i+1, j, k] - Ez[i, j, k]; dEy_dx = Ey[i+1, j, k] - Ey[i, j, k]; dEx_dy = Ex[i, j+1, k] - Ex[i, j, k]
+
+                    psi_ey_hx[i,j,k] = b_h_y[j] * psi_ey_hx[i,j,k] + c_h_y[j] * dEz_dy * dy; psi_ez_hx[i,j,k] = b_h_z[k] * psi_ez_hx[i,j,k] + c_h_z[k] * dEy_dz * dz
+                    psi_ez_hy[i,j,k] = b_h_x[i] * psi_ez_hy[i,j,k] + c_h_x[i] * dEx_dz * dz; psi_ex_hy[i,j,k] = b_h_z[k] * psi_ex_hy[i,j,k] + c_h_z[k] * dEz_dx * dx
+                    psi_ex_hz[i,j,k] = b_h_x[i] * psi_ex_hz[i,j,k] + c_h_x[i] * dEy_dx * dx; psi_ey_hz[i,j,k] = b_h_y[j] * psi_ey_hz[i,j,k] + c_h_y[j] * dEx_dy * dy
+
+                    Hx[i,j,k] -= ch2[i,j,k] * ( (dEz_dy/dy + psi_ey_hx[i,j,k]) - (dEy_dz/dz + psi_ez_hx[i,j,k]) )
+                    Hy[i,j,k] -= ch2[i,j,k] * ( (dEx_dz/dz + psi_ex_hy[i,j,k]) - (dEz_dx/dx + psi_ez_hy[i,j,k]) )
+                    Hz[i,j,k] -= ch2[i,j,k] * ( (dEy_dx/dx + psi_ex_hz[i,j,k]) - (dEx_dy/dy + psi_ey_hz[i,j,k]) )
+
+        for i in range(1, Nx - 1):
+            for j in range(1, Ny - 1):
+                for k in range(1, Nz - 1):
+                    dHz_dy = Hz[i, j, k] - Hz[i, j-1, k]; dHy_dz = Hy[i, j, k] - Hy[i, j, k-1]; dHx_dz = Hx[i, j, k] - Hx[i, j, k-1]
+                    dHz_dx = Hz[i, j, k] - Hz[i-1, j, k]; dHy_dx = Hy[i, j, k] - Hy[i-1, j, k]; dHx_dy = Hx[i, j, k] - Hx[i, j-1, k]
+
+                    psi_hy_ex[i,j,k] = b_e_y[j] * psi_hy_ex[i,j,k] + c_e_y[j] * dHz_dy * dy; psi_hz_ex[i,j,k] = b_e_z[k] * psi_hz_ex[i,j,k] + c_e_z[k] * dHy_dz * dz
+                    psi_hx_ey[i,j,k] = b_e_z[k] * psi_hx_ey[i,j,k] + c_e_z[k] * dHx_dz * dz; psi_hz_ey[i,j,k] = b_e_x[i] * psi_hz_ey[i,j,k] + c_e_x[i] * dHz_dx * dx
+                    psi_hy_ez[i,j,k] = b_e_x[i] * psi_hy_ez[i,j,k] + c_e_x[i] * dHy_dx * dx; psi_hx_ez[i,j,k] = b_e_y[j] * psi_hx_ez[i,j,k] + c_e_y[j] * dHx_dy * dy
+
+                    ex_old = Ex[i,j,k]; ey_old = Ey[i,j,k]; ez_old = Ez[i,j,k]
+                    Ex[i,j,k] = ce1_x[i,j,k]*ex_old + ce2_x[i,j,k]*((dHz_dy/dy+psi_hy_ex[i,j,k]) - (dHy_dz/dz+psi_hz_ex[i,j,k])) + ce3_x[i,j,k]*Px[i,j,k]
+                    Ey[i,j,k] = ce1_y[i,j,k]*ey_old + ce2_y[i,j,k]*((dHx_dz/dz+psi_hx_ey[i,j,k]) - (dHz_dx/dx+psi_hz_ey[i,j,k])) + ce3_y[i,j,k]*Py[i,j,k]
+                    Ez[i,j,k] = ce1_z[i,j,k]*ez_old + ce2_z[i,j,k]*((dHy_dx/dx+psi_hy_ez[i,j,k]) - (dHx_dy/dy+psi_hx_ez[i,j,k])) + ce3_z[i,j,k]*Pz[i,j,k]
+                    
+                    Px[i,j,k] = cp1_x[i,j,k]*Px[i,j,k] + cp2_x[i,j,k]*(Ex[i,j,k] + ex_old)
+                    Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
+                    Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
+
+        for e in range(num_el):
+            pulse = amp_arr[e] * math.sin(omega * n * dt + phase_arr[e])
+            for k in range(fzs_arr[e], fze_arr[e] + 1): Ez[fx_arr[e], fy_arr[e], k] += pulse
+            
+        if n >= steps - accum_steps:
+            e_j_wt = np.exp(-1j * omega * n * dt)
+            for r_idx in range(obs_pts.shape[0]):
+                obs_phasors[r_idx] += Ez[obs_pts[r_idx, 0], obs_pts[r_idx, 1], obs_pts[r_idx, 2]] * e_j_wt
+
+    obs_phasors /= accum_steps
+    return obs_phasors
+
+# ============================================================
+# M38: ADVANCED MIMO CHANNEL MATHEMATICS
+# ============================================================
+def generate_mimo_channel_mock(Nt, Nr, pos_tx, pos_rx, freqs, multipath=True, env_factor=1.0):
+    """Generates a geometrically consistent Broadband MIMO Channel Matrix H(f)."""
+    num_f = len(freqs)
+    H = np.zeros((num_f, Nr, Nt), dtype=np.complex128)
+    
+    np.random.seed(42) # Deterministic Mock Environment
+    num_clusters = 6 if multipath else 1
+    
+    # Generate Environment Clusters (Scatterers)
+    clusters = []
+    for c in range(num_clusters):
+        if c == 0: # Line of Sight (LoS)
+            clusters.append({"gain": 1.0, "delay": 5e-9, "az_tx": 0, "el_tx": 90, "az_rx": 180, "el_rx": 90})
+        else: # NLoS Multipath reflections
+            gain = np.random.rayleigh(0.4 * env_factor)
+            delay = np.random.uniform(10e-9, 100e-9 * env_factor)
+            az_tx = np.random.uniform(0, 360); el_tx = np.random.uniform(60, 120)
+            az_rx = np.random.uniform(0, 360); el_rx = np.random.uniform(60, 120)
+            clusters.append({"gain": gain, "delay": delay, "az_tx": az_tx, "el_tx": el_tx, "az_rx": az_rx, "el_rx": el_rx})
+            
+    for f_idx, f in enumerate(freqs):
+        k0 = 2 * np.pi * f / C_LIGHT
+        H_f = np.zeros((Nr, Nt), dtype=np.complex128)
+        
+        for cl in clusters:
+            # TX Steering Vector
+            tx_rx = np.sin(np.deg2rad(cl["el_tx"])) * np.cos(np.deg2rad(cl["az_tx"]))
+            tx_ry = np.sin(np.deg2rad(cl["el_tx"])) * np.sin(np.deg2rad(cl["az_tx"]))
+            tx_rz = np.cos(np.deg2rad(cl["el_tx"]))
+            a_tx = np.exp(1j * k0 * (pos_tx[:,0]*tx_rx + pos_tx[:,1]*tx_ry + pos_tx[:,2]*tx_rz))
+            
+            # RX Steering Vector
+            rx_rx = np.sin(np.deg2rad(cl["el_rx"])) * np.cos(np.deg2rad(cl["az_rx"]))
+            rx_ry = np.sin(np.deg2rad(cl["el_rx"])) * np.sin(np.deg2rad(cl["az_rx"]))
+            rx_rz = np.cos(np.deg2rad(cl["el_rx"]))
+            a_rx = np.exp(1j * k0 * (pos_rx[:,0]*rx_rx + pos_rx[:,1]*rx_ry + pos_rx[:,2]*rx_rz))
+            
+            # Add cluster contribution to H matrix
+            phase_delay = np.exp(-1j * 2 * np.pi * f * cl["delay"])
+            H_f += cl["gain"] * phase_delay * np.outer(a_rx, np.conj(a_tx))
+            
+        H[f_idx] = H_f
+    return H, clusters
+
+def calculate_mimo_capacity(H, snr_db):
+    """Calculates Spatial Shannon Capacity: C = log2(det(I + (SNR/Nt) * H * H^H))"""
+    Nr, Nt = H.shape
+    snr_lin = 10**(snr_db / 10.0)
+    I = np.eye(Nr)
+    # H @ H.conj().T gives the spatial correlation matrix at RX
+    R = H @ np.conj(H.T)
+    val = I + (snr_lin / Nt) * R
+    # Prevent numerical instability in det for poorly conditioned matrices
+    sign, logdet = np.linalg.slogdet(val)
+    return max(0.0, logdet / np.log(2))
+
+def calculate_pdp_and_delay_spread(H_freq, freqs):
+    """Converts H(f) to Channel Impulse Response (CIR) and extracts RMS Delay Spread."""
+    # Mean across spatial dimensions
+    H_mean = np.mean(H_freq, axis=(1, 2))
+    # IFFT to Time Domain
+    cir = np.fft.ifft(H_mean)
+    pdp = np.abs(cir)**2
+    
+    df = freqs[1] - freqs[0]
+    time_taps = np.fft.fftfreq(len(freqs), d=df)
+    
+    # Shift to positive delays
+    time_taps = np.fft.fftshift(time_taps)
+    pdp = np.fft.fftshift(pdp)
+    
+    # RMS Delay Spread Math
+    valid_idx = time_taps >= 0
+    t_valid = time_taps[valid_idx]
+    p_valid = pdp[valid_idx]
+    
+    total_power = np.sum(p_valid)
+    if total_power < 1e-12: return pdp, time_taps, 0.0
+    
+    mean_delay = np.sum(t_valid * p_valid) / total_power
+    rms_delay = np.sqrt(np.sum((t_valid - mean_delay)**2 * p_valid) / total_power)
+    
+    return pdp, time_taps, rms_delay
+
+def apply_precoding(H, method="SVD"):
+    Nr, Nt = H.shape
+    if method == "SVD":
+        U, S, Vh = np.linalg.svd(H, full_matrices=False)
+        # Optimal precoder for dominant mode is the conjugate of the dominant right singular vector
+        W_tx = np.conj(Vh[0, :]).reshape(-1, 1)
+        W_rx = U[:, 0].reshape(-1, 1)
+        gain = np.abs(np.conj(W_rx.T) @ H @ W_tx)[0,0]
+        return W_tx, W_rx, gain
+    elif method == "MRT":
+        # Maximum Ratio Transmission (No RX combining coordination)
+        W_tx = np.conj(H.T) @ np.ones((Nr, 1))
+        W_tx = W_tx / np.linalg.norm(W_tx)
+        gain = np.abs(np.sum(H @ W_tx))
+        return W_tx, None, gain
+    elif method == "Zero-Forcing":
+        try:
+            # Pseudo-inverse of H
+            H_inv = np.linalg.pinv(H)
+            # TX weights to force diagonal identity at RX (simplified for broadcast)
+            W_tx = H_inv[:, 0].reshape(-1, 1) 
+            W_tx = W_tx / np.linalg.norm(W_tx)
+            gain = np.abs((H @ W_tx)[0, 0])
+            return W_tx, None, gain
+        except np.linalg.LinAlgError:
+            return None, None, -1.0
+
+def apply_imperfect_csi(H, error_variance=0.1):
+    """Simulates Channel Estimation Error: H_est = sqrt(1-e^2)*H + e*Noise"""
+    noise = (np.random.normal(0, 1, H.shape) + 1j * np.random.normal(0, 1, H.shape)) / np.sqrt(2)
+    H_est = np.sqrt(1 - error_variance**2) * H + error_variance * noise * np.linalg.norm(H) / np.sqrt(np.prod(H.shape))
+    return H_est
+
+# ============================================================
+# M38: ADVANCED MIMO CHANNEL LABORATORY UI
+# ============================================================
+if exp_mode == "Advanced MIMO Channel Lab (M38)":
+    st.markdown("### 📡 Advanced MIMO & Electromagnetic Channel Laboratory")
+    st.info("Transforms standalone Phased Arrays into complete $N_T \\times N_R$ spatial communication links. Generates geometric Multipath matrices $H(f)$, exact Shannon Spatial Capacity bounds, Power Delay Profiles (PDP) via IFFT, and explicit Zero-Forcing (ZF) precoding resilience analytics.")
+    
+    t_cfg, t_svd, t_cap, t_pdp, t_pre = st.tabs([
+        "1. MIMO Configuration", "2. Channel Matrix & SVD", "3. Spatial Capacity", "4. Multipath Delay Profile", "5. Precoding & Imperfect CSI"
     ])
     
-    freq_arr = 2.4e9
-    wl_arr = C_LIGHT / freq_arr
-    
     with t_cfg:
-        st.markdown("#### Physical Architecture & Targets")
-        c_c1, c_c2, c_c3 = st.columns(3)
-        array_type = c_c1.selectbox("Array Geometry", ["Uniform Linear Array (ULA)", "Planar Rectangular Array (UPA)", "Uniform Circular Array (UCA)"])
-        N_el = c_c2.number_input("Number of Elements", 4, 64, 8, 1)
-        spacing = c_c3.number_input("Element Spacing (λ)", 0.25, 2.0, 0.5, 0.05)
+        st.markdown("#### TX/RX Array Geometries & Environment")
+        c_m1, c_m2, c_m3 = st.columns(3)
+        Nt = c_m1.number_input("Transmit Antennas ($N_T$)", 2, 64, 4, 2)
+        Nr = c_m2.number_input("Receive Antennas ($N_R$)", 2, 64, 4, 2)
+        env_str = c_m3.selectbox("Environment Scattering", ["Line-of-Sight (LoS) Only", "Urban Multipath (High Delay)", "Indoor (Low Delay)"])
         
-        pos = generate_array_geometry(array_type, N_el, spacing, spacing, freq_arr)
+        spacing = st.slider("Array Element Spacing (λ)", 0.1, 2.0, 0.5, 0.1)
+        freq_c = 2.4e9
         
-        st.markdown("##### Steering Targets")
-        c_t1, c_t2, c_t3, c_t4 = st.columns(4)
-        t_th = c_t1.number_input("Target Theta (°)", 0.0, 180.0, 90.0)
-        t_ph = c_t2.number_input("Target Phi (°)", 0.0, 360.0, 0.0)
-        
-        enable_null = c_t3.checkbox("Enable Null Constraints")
-        null_th = c_t3.number_input("Null 1 Theta (°)", 0.0, 180.0, 90.0, disabled=not enable_null)
-        null_ph = c_t4.number_input("Null 1 Phi (°)", 0.0, 360.0, 45.0, disabled=not enable_null)
-        
-        nulls = [(null_th, null_ph)] if enable_null else []
-        
-        st.session_state.m37_array = {"pos": pos, "N": N_el, "space": spacing, "type": array_type, "t_th": t_th, "t_ph": t_ph, "nulls": nulls}
-
-    if st.session_state.m37_array is not None:
-        arr = st.session_state.m37_array
-        N = arr["N"]; pos = arr["pos"]
-        
-        with t_beam:
-            st.markdown("#### Adaptive Weights & Hardware Quantization")
+        if st.button("Generate MIMO Channel Matrix", type="primary"):
+            pb = st.progress(0)
             
-            c_w1, c_w2 = st.columns(2)
-            ph_bits = c_w1.selectbox("Phase Shifter Resolution (Bits)", [0, 2, 3, 4, 5, 6, 8], index=0, format_func=lambda x: "Ideal (Infinite)" if x==0 else f"{x}-Bit ({360/(2**x)}° Steps)")
-            amp_bits = c_w2.selectbox("VGA Amplitude Resolution (Bits)", [0, 4, 6, 8], index=0, format_func=lambda x: "Ideal (Continuous)" if x==0 else f"{x}-Bit")
+            # Position Setup (ULA for simplicity in MOCK generation)
+            wl = C_LIGHT / freq_c
+            pos_tx = np.zeros((Nt, 3)); pos_rx = np.zeros((Nr, 3))
+            for i in range(Nt): pos_tx[i, 1] = (i - (Nt-1)/2.0) * spacing * wl
+            for i in range(Nr): pos_rx[i, 1] = (i - (Nr-1)/2.0) * spacing * wl
+            # Offset RX position by 100 meters
+            pos_rx[:, 0] = 100.0
             
-            if st.button("Synthesize Adaptive Beam Vectors", type="primary"):
-                w_ideal = compute_adaptive_null_weights(pos, freq_arr, arr["t_th"], arr["t_ph"], arr["nulls"])
-                w_quant = quantize_weights(w_ideal, amp_bits, ph_bits)
-                
-                # Active VSWR evaluation
-                S_mat = generate_mock_s_matrix(N, arr["space"])
-                vswr_active = calculate_active_vswr(w_quant, S_mat)
-                
-                st.session_state.m37_weights = {"w_ideal": w_ideal, "w_quant": w_quant, "vswr": vswr_active}
-                st.success("Mathematical Synthesis Complete.")
-
-            if st.session_state.m37_weights is not None:
-                w = st.session_state.m37_weights
-                
-                thetas = np.deg2rad(np.arange(0, 181, 1)); phis = np.deg2rad(np.array([arr["t_ph"]]))
-                
-                AF_ideal = compute_array_factor_complex(thetas, phis, pos, w["w_ideal"], freq_arr)
-                AF_quant = compute_array_factor_complex(thetas, phis, pos, w["w_quant"], freq_arr)
-                
-                # Normalization
-                AF_ideal_db = 20 * np.log10(np.abs(AF_ideal) / np.max(np.abs(AF_ideal)) + 1e-12)
-                AF_quant_db = 20 * np.log10(np.abs(AF_quant) / np.max(np.abs(AF_ideal)) + 1e-12)
-                
-                col_plt1, col_plt2 = st.columns([2, 1])
-                
-                fig_b = go.Figure()
-                fig_b.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_ideal_db[:, 0], mode='lines', name="Ideal Adaptive Projection", line=dict(color='blue')))
-                if ph_bits > 0 or amp_bits > 0:
-                    fig_b.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_quant_db[:, 0], mode='lines', name=f"Quantized Beam ({ph_bits}-Bit Ph)", line=dict(color='red', dash='dash')))
-                
-                if arr["nulls"]:
-                    fig_b.add_vline(x=arr["nulls"][0][0], line_dash="dot", line_color="black", annotation_text="Targeted Null")
-                    
-                fig_b.update_layout(title=f"Beamforming Azimuth Cut (Phi={arr['t_ph']}°)", xaxis_title="Theta (°)", yaxis_title="Normalized Array Factor (dB)", yaxis_range=[-50, 2])
-                col_plt1.plotly_chart(fig_b, use_container_width=True)
-                
-                # Active VSWR warning list
-                with col_plt2:
-                    st.markdown("##### Mutual Coupling Check")
-                    st.info("High mutual coupling interacting with synthesized weights can blind specific elements via extreme active reflection coefficients.")
-                    max_vswr = np.max(w["vswr"])
-                    st.metric("Peak Active VSWR", f"{max_vswr:.2f}:1", "Safe" if max_vswr < 3.0 else "DANGER", delta_color="inverse")
-                    
-                    df_w = pd.DataFrame({
-                        "El": range(1, N+1),
-                        "Amp": np.abs(w["w_quant"]),
-                        "Phase (°)": np.rad2deg(np.angle(w["w_quant"])),
-                        "VSWR": w["vswr"]
-                    })
-                    st.dataframe(df_w, height=300)
-
-        with t_scan:
-            st.markdown("#### 🔭 Beam Scan Loss Analytics")
-            st.info("Systematically steers the array from broadside across the full angular horizon, recording the physical drop in Peak Directivity and Main Beam broadening induced by reduced effective aperture area (Scan Loss).")
+            # Bandwidth setup for PDP evaluation
+            freqs = np.linspace(2.3e9, 2.5e9, 101)
             
-            if st.button("Execute Scan Angle Sweep"):
-                pb_scan = st.progress(0)
-                scan_angles = np.arange(0, 91, 5)
-                scan_peaks = []
-                
-                # Static grid for AF resolution
-                thetas = np.deg2rad(np.arange(0, 181, 1)); phis = np.deg2rad(np.array([arr["t_ph"]]))
-                
-                for i, st_ang in enumerate(scan_angles):
-                    # No nulls for basic scan loss curve
-                    w_st = compute_adaptive_null_weights(pos, freq_arr, st_ang, arr["t_ph"], [])
-                    AF_st = compute_array_factor_complex(thetas, phis, pos, w_st, freq_arr)
-                    # We DO NOT normalize to 1 here, we track absolute sum magnitude to observe scan degradation
-                    scan_peaks.append(20 * np.log10(np.max(np.abs(AF_st)) + 1e-12))
-                    pb_scan.progress((i+1)/len(scan_angles))
-                
-                # Normalize relative to broadside (0 deg)
-                scan_peaks = np.array(scan_peaks)
-                scan_loss = scan_peaks - scan_peaks[0]
-                
-                fig_scan = go.Figure(go.Scatter(x=scan_angles, y=scan_loss, mode='lines+markers', marker=dict(color='purple')))
-                fig_scan.update_layout(title="Array Scan Loss vs Steering Angle", xaxis_title="Steering Angle Theta (°)", yaxis_title="Gain Relative to Broadside (dB)", yaxis_range=[-10, 1])
-                st.plotly_chart(fig_scan, use_container_width=True)
-
-        with t_mc:
-            st.markdown("#### 🎲 Monte Carlo Hardware Robustness")
-            st.info("Injects statistical Gaussian variance into the calculated Ideal Phase and Amplitude vectors over 50 simulation runs. Generates bounded confidence intervals highlighting Null-filling vulnerability and Side Lobe degradation under real-world manufacturing tolerances.")
+            multipath = False; env_factor = 1.0
+            if env_str == "Urban Multipath (High Delay)": multipath = True; env_factor = 5.0
+            elif env_str == "Indoor (Low Delay)": multipath = True; env_factor = 0.5
             
-            if st.session_state.m37_weights is None: st.warning("Synthesize Beam Weights in Tab 2 first.")
-            else:
-                c_m1, c_m2 = st.columns(2)
-                mc_ph_err = c_m1.number_input("Phase Tolerance Error (Std Dev °)", 0.0, 45.0, 10.0, 1.0)
-                mc_amp_err = c_m2.number_input("Amplitude Tolerance Error (Std Dev Linear)", 0.0, 0.5, 0.1, 0.05)
-                
-                if st.button("Execute Monte Carlo Distribution"):
-                    pb_mc = st.progress(0)
-                    w_ideal = st.session_state.m37_weights["w_ideal"]
-                    thetas = np.deg2rad(np.arange(0, 181, 2)); phis = np.deg2rad(np.array([arr["t_ph"]]))
-                    
-                    AF_ideal = compute_array_factor_complex(thetas, phis, pos, w_ideal, freq_arr)
-                    AF_ideal_db = 20 * np.log10(np.abs(AF_ideal) / np.max(np.abs(AF_ideal)) + 1e-12)
-                    
-                    mc_runs = 50
-                    all_af = np.zeros((mc_runs, len(thetas)))
-                    
-                    for i in range(mc_runs):
-                        w_noisy = apply_weight_errors(w_ideal, mc_amp_err, mc_ph_err)
-                        AF_noisy = compute_array_factor_complex(thetas, phis, pos, w_noisy, freq_arr)
-                        all_af[i, :] = 20 * np.log10(np.abs(AF_noisy) / np.max(np.abs(AF_ideal)) + 1e-12)
-                        pb_mc.progress((i+1)/mc_runs)
-                        
-                    # Statistical Bounds
-                    af_mean = np.mean(all_af, axis=0)
-                    af_p95 = np.percentile(all_af, 95, axis=0)
-                    
-                    fig_mc = go.Figure()
-                    fig_mc.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_ideal_db[:, 0], mode='lines', name="Ideal Baseline", line=dict(color='blue', width=2)))
-                    fig_mc.add_trace(go.Scatter(x=np.rad2deg(thetas), y=af_p95, mode='lines', name="95th Percentile Degradation Boundary", line=dict(color='red', dash='dot')))
-                    
-                    # Optional visualization of all traces lightly
-                    for i in range(mc_runs):
-                        fig_mc.add_trace(go.Scatter(x=np.rad2deg(thetas), y=all_af[i, :], mode='lines', line=dict(color='rgba(150,150,150,0.1)'), showlegend=False))
-                        
-                    fig_mc.update_layout(title=f"Monte Carlo Envelope ({mc_runs} iterations)", xaxis_title="Theta (°)", yaxis_title="Normalized AF (dB)", yaxis_range=[-40, 2])
-                    st.plotly_chart(fig_mc, use_container_width=True)
+            H_f, clusters = generate_mimo_channel_mock(Nt, Nr, pos_tx, pos_rx, freqs, multipath, env_factor)
+            
+            st.session_state.m38_channel = {
+                "H": H_f, "freqs": freqs, "Nt": Nt, "Nr": Nr, "clusters": clusters, "env": env_str
+            }
+            pb.progress(1.0)
+            st.success(f"MOCK Broadband Channel Matrix $H(f) \\in \\mathbb{{C}}^{{{Nr} \\times {Nt} \\times 101}}$ generated successfully.")
 
-        with t_rep:
-            if st.session_state.m37_weights is not None:
-                st.markdown("#### 🗃️ Provenance & Beam Validation Export")
+    if st.session_state.m38_channel is not None:
+        ch = st.session_state.m38_channel
+        H_center = ch["H"][50] # Center frequency 2.4 GHz slice
+        
+        with t_svd:
+            st.markdown("#### Narrowband Spatial Channel Properties ($f_c = 2.4$ GHz)")
+            
+            # Eigenanalysis
+            U, S, Vh = np.linalg.svd(H_center, full_matrices=False)
+            cond_num = np.max(S) / (np.min(S) + 1e-12)
+            numerical_rank = np.sum(S > 1e-3 * np.max(S))
+            
+            c_s1, c_s2, c_s3 = st.columns(3)
+            c_s1.metric("Numerical Channel Rank", f"{numerical_rank}", f"Max possible: {min(ch['Nt'], ch['Nr'])}")
+            c_s2.metric("Matrix Condition Number", f"{cond_num:.1f}", "Well-Conditioned" if cond_num < 10 else "Ill-Conditioned", delta_color="inverse")
+            c_s3.metric("Dominant Singular Value (Σ₁)", f"{S[0]:.2f}")
+            
+            col_hm1, col_hm2 = st.columns(2)
+            # Heatmaps
+            fig_mag = go.Figure(data=go.Heatmap(z=20*np.log10(np.abs(H_center) + 1e-12), colorscale='Viridis', colorbar=dict(title="dB")))
+            fig_mag.update_layout(title="Channel Magnitude $|H_{ij}|$ (dB)", xaxis_title="TX Antenna (j)", yaxis_title="RX Antenna (i)", width=350, height=350)
+            col_hm1.plotly_chart(fig_mag)
+            
+            fig_ph = go.Figure(data=go.Heatmap(z=np.angle(H_center), colorscale='Phase', zmin=-np.pi, zmax=np.pi, colorbar=dict(title="Rads")))
+            fig_ph.update_layout(title="Channel Phase $\\angle H_{ij}$ (Rads)", xaxis_title="TX Antenna (j)", yaxis_title="RX Antenna (i)", width=350, height=350)
+            col_hm2.plotly_chart(fig_ph)
+
+        with t_cap:
+            st.markdown("#### Shannon Spatial Capacity vs SNR")
+            st.info("Computes theoretical data throughput scaling bounds utilizing full spatial correlation matrices. High rank and multipath richness explicitly stack multiplexing layers, raising bounds linearly rather than logarithmically.")
+            
+            snr_range = np.linspace(-10, 30, 21)
+            cap_mimo = [calculate_mimo_capacity(H_center, snr) for snr in snr_range]
+            
+            # Baseline SISO (H[0,0])
+            cap_siso = [math.log2(1 + 10**(snr/10) * np.abs(H_center[0,0])**2) for snr in snr_range]
+            
+            fig_cap = go.Figure()
+            fig_cap.add_trace(go.Scatter(x=snr_range, y=cap_mimo, mode='lines+markers', name=f"MIMO ({ch['Nt']}x{ch['Nr']})", line=dict(color='blue', width=3)))
+            fig_cap.add_trace(go.Scatter(x=snr_range, y=cap_siso, mode='lines', name="SISO (1x1 Benchmark)", line=dict(color='gray', dash='dash')))
+            
+            fig_cap.update_layout(title="Ergodic Channel Capacity", xaxis_title="Signal-to-Noise Ratio (dB)", yaxis_title="Spectral Efficiency (bits/s/Hz)")
+            st.plotly_chart(fig_cap, use_container_width=True)
+
+        with t_pdp:
+            st.markdown("#### Time-Domain Multipath Spread (Power Delay Profile)")
+            st.info("Transforms the $200$ MHz broadband $H(f)$ sweep into the time domain via Inverse Fast Fourier Transform (IFFT) to physically isolate spatial reflection clusters and compute inter-symbol interference (RMS Delay Spread) limits.")
+            
+            pdp, t_taps, rms_delay = calculate_pdp_and_delay_spread(ch["H"], ch["freqs"])
+            
+            st.metric("Calculated RMS Delay Spread ($t_{rms}$)", f"{rms_delay * 1e9:.2f} ns", "Multipath Active" if rms_delay > 1e-9 else "Clean LoS", delta_color="inverse")
+            
+            fig_pdp = go.Figure(go.Scatter(x=t_taps*1e9, y=10*np.log10(pdp + 1e-12), mode='lines', fill='tozeroy', line=dict(color='purple')))
+            fig_pdp.update_layout(title="Power Delay Profile (PDP)", xaxis_title="Delay (ns)", yaxis_title="Relative Power (dB)", xaxis_range=[0, 100])
+            st.plotly_chart(fig_pdp, use_container_width=True)
+
+        with t_pre:
+            st.markdown("#### Precoding & Channel Estimation Robustness")
+            st.info("Evaluates real-time Spatial Beamforming solutions across the Matrix. Introduces `Imperfect CSI` (Channel State Information) Error variances to measure strict Zero-Forcing (ZF) instability when operating with degraded measurements.")
+            
+            csi_err = st.slider("CSI Estimation Error Variance ($\epsilon$)", 0.0, 0.5, 0.1, 0.05)
+            
+            # Perfect CSI
+            _, _, gain_svd = apply_precoding(H_center, "SVD")
+            _, _, gain_mrt = apply_precoding(H_center, "MRT")
+            _, _, gain_zf = apply_precoding(H_center, "Zero-Forcing")
+            
+            # Imperfect CSI
+            np.random.seed(42)
+            H_est = apply_imperfect_csi(H_center, csi_err)
+            
+            # Precode based on H_est, but evaluate received signal through True H_center
+            W_zf, _, _ = apply_precoding(H_est, "Zero-Forcing")
+            gain_zf_err = np.abs((H_center @ W_zf)[0,0]) if W_zf is not None else -1.0
+            
+            W_mrt, _, _ = apply_precoding(H_est, "MRT")
+            gain_mrt_err = np.abs(np.sum(H_center @ W_mrt))
+            
+            st.markdown("##### Effective Beamformed Gain (Normalized Linear)")
+            db_res = pd.DataFrame({
+                "Precoding Algorithm": ["Max Ratio Transmission (MRT)", "Zero-Forcing (ZF)", "Optimal SVD (Perfect Only)"],
+                "Perfect CSI Gain": [gain_mrt, gain_zf if gain_zf > 0 else "UNSTABLE", gain_svd],
+                f"Imperfect CSI Gain (e={csi_err})": [gain_mrt_err, gain_zf_err if gain_zf_err > 0 else "UNSTABLE", "N/A"]
+            })
+            st.table(db_res)
+            
+            if gain_zf < 0 or gain_zf_err < 0:
+                st.error("ZERO-FORCING SOLUTION UNRELIABLE: Matrix inversion failed due to severe Ill-Conditioning limits.")
                 
+            st.markdown("---")
+            if st.button("Generate MIMO Provenance Report"):
                 report = {
-                    "Beamforming_ID": str(uuid.uuid4()),
-                    "Timestamp": datetime.datetime.now().isoformat(),
-                    "Array_Configuration": {
-                        "Type": arr["type"], "Elements": arr["N"], "Spacing_Lambda": arr["space"]
-                    },
-                    "Target_Constraints": {
-                        "Main_Beam": {"Theta": arr["t_th"], "Phi": arr["t_ph"]},
-                        "Orthogonal_Nulls": arr["nulls"]
-                    },
-                    "Hardware_Quantization": {
-                        "Status": "APPLIED",
-                        "Peak_Active_VSWR": float(np.max(st.session_state.m37_weights["vswr"]))
-                    },
-                    "Integrity_Hash": hashlib.md5(json.dumps(arr["t_th"]).encode()).hexdigest()
+                    "MIMO_ID": str(uuid.uuid4()), "Timestamp": datetime.datetime.now().isoformat(),
+                    "System": {"Nt": ch["Nt"], "Nr": ch["Nr"], "Environment": ch["env"]},
+                    "Channel_Metrics": {"Rank": int(numerical_rank), "Condition_Number": float(cond_num), "RMS_Delay_ns": float(rms_delay * 1e9)},
+                    "Robustness": {"CSI_Error": csi_err, "ZF_Failure": gain_zf < 0},
+                    "Data_Source": "MOCK GEOMETRIC SCATTERING MODEL"
                 }
-                
-                st.json(report)
-                st.download_button("Export Advanced Beamforming Report (JSON)", data=json.dumps(report, indent=2), file_name="m37_beamforming_report.json", mime="application/json")
+                st.download_button("Export MIMO Report (JSON)", data=json.dumps(report, indent=2), file_name="m38_mimo_report.json", mime="application/json")
 
-elif exp_mode not in ["Advanced Beamforming Lab (M37)"]:
-    st.info("Select 'Advanced Beamforming Lab (M37)' to enable adaptive null projection and hardware quantization analytics.")
+elif exp_mode not in ["Advanced MIMO Channel Lab (M38)"]:
+    st.info("Select 'Advanced MIMO Channel Lab (M38)' to analyze multi-antenna capacity matrices, SVD, and Power Delay Profiles.")
 
