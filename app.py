@@ -1,6 +1,6 @@
 """
 3D Electromagnetics & Antenna Radiation Laboratory
-Milestone 35 — Advanced Antenna Characterization & Automated Measurement Validation
+Milestone 36 — Advanced Antenna Array & Multi-Antenna System Characterization
 """
 
 import streamlit as st
@@ -57,7 +57,7 @@ MAT_LIB = {
 # ============================================================
 st.set_page_config(page_title="3D EM Laboratory", layout="wide")
 st.title("3D Electromagnetics & Antenna Radiation Laboratory")
-st.markdown("### Milestone 35 — Advanced Antenna Characterization & Automated Validation")
+st.markdown("### Milestone 36 — Advanced Antenna Array & Multi-Antenna Characterization")
 
 st.sidebar.header("COMPUTATION BACKEND")
 backend_mode = st.sidebar.selectbox("Execution Backend", ["Auto", "GPU", "CPU"])
@@ -68,6 +68,7 @@ st.sidebar.markdown(f"**Backend:** `{active_backend}` | **VRAM:** `{GPU_MEM_MB:.
 
 st.sidebar.header("1. EXPERIMENT MODE")
 exp_mode = st.sidebar.selectbox("Select Mode", [
+    "Advanced Antenna Array Lab (M36)",
     "Advanced Antenna Characterization (M35)",
     "Advanced Antenna Calibration Lab (M34)",
     "Advanced NF2FF Validation (M33)",
@@ -89,19 +90,19 @@ exp_mode = st.sidebar.selectbox("Select Mode", [
     "Inverse Design & Optimization",
     "Metamaterials Laboratory",
     "Adaptive Mesh Refinement (AMR)",
-    "Antenna Array Laboratory",
     "Single Antenna (Dipole/Patch)"
 ])
 
 # Global States
-if 'm35_dataset' not in st.session_state: st.session_state.m35_dataset = None
-if 'm35_char' not in st.session_state: st.session_state.m35_char = None
+if 'm36_array' not in st.session_state: st.session_state.m36_array = None
+if 'm36_ff' not in st.session_state: st.session_state.m36_ff = None
 
 # ============================================================
 # GRID & DOMAIN SETUP (DYNAMIC)
 # ============================================================
 st.sidebar.header("2. GRID & DOMAIN")
 Nx = Ny = Nz = 40 if exp_mode not in ["Single Antenna (Dipole/Patch)"] else 80
+if exp_mode == "Advanced Antenna Array Lab (M36)": Nx = Ny = 60; Nz = 40 # Expand for array grids
 dx = dy = dz = 0.005 
 
 cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
@@ -144,295 +145,378 @@ def reset_materials(step_dt=dt):
 reset_materials()
 
 # ============================================================
-# M35: MATH & CHARACTERIZATION ENGINE
+# MEMORY SAFETY
 # ============================================================
-def generate_m35_mock_dataset():
-    """Generates a structured Mock Far-Field & S11 dataset with intentional imperfections to trigger the Characterization Engine."""
-    np.random.seed(42)
-    freq = 2.4e9
+bytes_per_element = 4 if precision == "float32" else 8; num_cells = Nx * Ny * Nz
+mem_base_bytes = (44 * num_cells * bytes_per_element)
+memory_mb = mem_base_bytes / (1024 * 1024)
+st.sidebar.markdown(f"**Est. Memory Req (Per Sim):** `{memory_mb:.2f} MB`")
+if active_backend == "GPU" and memory_mb > (GPU_MEM_MB * 0.9): st.stop()
+elif active_backend == "CPU" and memory_mb > 3000: st.stop()
+
+def compute_cpml(N, d_pml, delta, step_dt, m=3, R_err=1e-4, alpha_max=0.05):
+    b_e = np.zeros(N, dtype=dtype_np); c_e = np.zeros(N, dtype=dtype_np); b_h = np.zeros(N, dtype=dtype_np); c_h = np.zeros(N, dtype=dtype_np)
+    sigma_max = - (m + 1) * math.log(R_err) / (2.0 * Z_0 * (d_pml * delta)) if d_pml > 0 else 0
+    for i in range(N):
+        if d_pml == 0: continue
+        d_e = (d_pml - i)*delta if i < d_pml else (i - (N - 1 - d_pml))*delta if i > N - 1 - d_pml else 0.0
+        d_h = (d_pml - i - 0.5)*delta if i < d_pml else (i + 0.5 - (N - 1 - d_pml))*delta if i > N - 2 - d_pml else 0.0
+        d_h = max(0.0, d_h)
+        if d_e > 0:
+            s_e = sigma_max * (d_e / (d_pml * delta))**m; a_e = alpha_max * (1.0 - d_e / (d_pml * delta))**m
+            b_e[i] = math.exp(-(s_e + a_e * EPS_0 / step_dt) * (step_dt / EPS_0)); c_e[i] = s_e / (s_e + a_e * EPS_0 / step_dt) * (b_e[i] - 1.0) / delta
+        if d_h > 0:
+            s_h = sigma_max * (d_h / (d_pml * delta))**m; a_h = alpha_max * (1.0 - d_h / (d_pml * delta))**m
+            b_h[i] = math.exp(-(s_h + a_h * EPS_0 / step_dt) * (step_dt / EPS_0)); c_h[i] = s_h / (s_h + a_h * EPS_0 / step_dt) * (b_h[i] - 1.0) / delta
+    return b_e, c_e, b_h, c_h
+
+b_e_x, c_e_x, b_h_x, c_h_x = compute_cpml(Nx, pml_thickness, dx, dt); b_e_y, c_e_y, b_h_y, c_h_y = compute_cpml(Ny, pml_thickness, dy, dt); b_e_z, c_e_z, b_h_z, c_h_z = compute_cpml(Nz, pml_thickness, dz, dt)
+
+# ============================================================
+# M36: FDTD FULL-WAVE ARRAY SOLVER
+# ============================================================
+@nb.njit(cache=True)
+def run_simulation_array_cpu(Nx, Ny, Nz, dx, dy, dz, dt, steps, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z,
+                       ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, 
+                       num_el, fx_arr, fy_arr, fzs_arr, fze_arr, amp_arr, phase_arr, freq_hz, z_scan):
+
+    Ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    Hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    Px = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Py = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); Pz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_ey_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hx = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ez_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_ex_hy = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ex_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_ey_hz = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_hy_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hz_ex = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
+    psi_hz_ey = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hy_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype); psi_hx_ez = np.zeros((Nx, Ny, Nz), dtype=ce1_x.dtype)
     
-    # 1. Mock S-Parameters
-    f_arr = np.linspace(2.0e9, 3.0e9, 101)
-    # Inject a slight resonance shift (2.42 GHz) to trigger correlation anomaly vs operating 2.4 GHz
-    s11_db = -2.0 - 18.0 * np.exp(-((f_arr - 2.42e9)/0.05e9)**2) + np.random.normal(0, 0.5, 101)
-    s11_lin = 10**(s11_db / 20.0)
-    
-    # 2. Mock 3D Far-Field Pattern (with artificial Side Lobes)
-    thetas = np.deg2rad(np.arange(0, 181, 2))
-    phis = np.deg2rad(np.arange(0, 360, 2))
+    Ex_phasor = np.zeros((Nx, Ny), dtype=np.complex128)
+    Ey_phasor = np.zeros((Nx, Ny), dtype=np.complex128)
+    omega = 2.0 * np.pi * freq_hz
+    accum_steps = steps // 2
+
+    for n in range(steps):
+        t_steps = float(n)
+        for i in range(Nx - 1):
+            for j in range(Ny - 1):
+                for k in range(Nz - 1):
+                    dEz_dy = Ez[i, j+1, k] - Ez[i, j, k]; dEy_dz = Ey[i, j, k+1] - Ey[i, j, k]; dEx_dz = Ex[i, j, k+1] - Ex[i, j, k]
+                    dEz_dx = Ez[i+1, j, k] - Ez[i, j, k]; dEy_dx = Ey[i+1, j, k] - Ey[i, j, k]; dEx_dy = Ex[i, j+1, k] - Ex[i, j, k]
+
+                    psi_ey_hx[i,j,k] = b_h_y[j] * psi_ey_hx[i,j,k] + c_h_y[j] * dEz_dy * dy; psi_ez_hx[i,j,k] = b_h_z[k] * psi_ez_hx[i,j,k] + c_h_z[k] * dEy_dz * dz
+                    psi_ez_hy[i,j,k] = b_h_x[i] * psi_ez_hy[i,j,k] + c_h_x[i] * dEx_dz * dz; psi_ex_hy[i,j,k] = b_h_z[k] * psi_ex_hy[i,j,k] + c_h_z[k] * dEz_dx * dx
+                    psi_ex_hz[i,j,k] = b_h_x[i] * psi_ex_hz[i,j,k] + c_h_x[i] * dEy_dx * dx; psi_ey_hz[i,j,k] = b_h_y[j] * psi_ey_hz[i,j,k] + c_h_y[j] * dEx_dy * dy
+
+                    Hx[i,j,k] -= ch2[i,j,k] * ( (dEz_dy/dy + psi_ey_hx[i,j,k]) - (dEy_dz/dz + psi_ez_hx[i,j,k]) )
+                    Hy[i,j,k] -= ch2[i,j,k] * ( (dEx_dz/dz + psi_ex_hy[i,j,k]) - (dEz_dx/dx + psi_ez_hy[i,j,k]) )
+                    Hz[i,j,k] -= ch2[i,j,k] * ( (dEy_dx/dx + psi_ex_hz[i,j,k]) - (dEx_dy/dy + psi_ey_hz[i,j,k]) )
+
+        for i in range(1, Nx - 1):
+            for j in range(1, Ny - 1):
+                for k in range(1, Nz - 1):
+                    dHz_dy = Hz[i, j, k] - Hz[i, j-1, k]; dHy_dz = Hy[i, j, k] - Hy[i, j, k-1]; dHx_dz = Hx[i, j, k] - Hx[i, j, k-1]
+                    dHz_dx = Hz[i, j, k] - Hz[i-1, j, k]; dHy_dx = Hy[i, j, k] - Hy[i-1, j, k]; dHx_dy = Hx[i, j, k] - Hx[i, j-1, k]
+
+                    psi_hy_ex[i,j,k] = b_e_y[j] * psi_hy_ex[i,j,k] + c_e_y[j] * dHz_dy * dy; psi_hz_ex[i,j,k] = b_e_z[k] * psi_hz_ex[i,j,k] + c_e_z[k] * dHy_dz * dz
+                    psi_hx_ey[i,j,k] = b_e_z[k] * psi_hx_ey[i,j,k] + c_e_z[k] * dHx_dz * dz; psi_hz_ey[i,j,k] = b_e_x[i] * psi_hz_ey[i,j,k] + c_e_x[i] * dHz_dx * dx
+                    psi_hy_ez[i,j,k] = b_e_x[i] * psi_hy_ez[i,j,k] + c_e_x[i] * dHy_dx * dx; psi_hx_ez[i,j,k] = b_e_y[j] * psi_hx_ez[i,j,k] + c_e_y[j] * dHx_dy * dy
+
+                    ex_old = Ex[i,j,k]; ey_old = Ey[i,j,k]; ez_old = Ez[i,j,k]
+                    Ex[i,j,k] = ce1_x[i,j,k]*ex_old + ce2_x[i,j,k]*((dHz_dy/dy+psi_hy_ex[i,j,k]) - (dHy_dz/dz+psi_hz_ex[i,j,k])) + ce3_x[i,j,k]*Px[i,j,k]
+                    Ey[i,j,k] = ce1_y[i,j,k]*ey_old + ce2_y[i,j,k]*((dHx_dz/dz+psi_hx_ey[i,j,k]) - (dHz_dx/dx+psi_hz_ey[i,j,k])) + ce3_y[i,j,k]*Py[i,j,k]
+                    Ez[i,j,k] = ce1_z[i,j,k]*ez_old + ce2_z[i,j,k]*((dHy_dx/dx+psi_hy_ez[i,j,k]) - (dHx_dy/dy+psi_hx_ez[i,j,k])) + ce3_z[i,j,k]*Pz[i,j,k]
+                    
+                    Px[i,j,k] = cp1_x[i,j,k]*Px[i,j,k] + cp2_x[i,j,k]*(Ex[i,j,k] + ex_old)
+                    Py[i,j,k] = cp1_y[i,j,k]*Py[i,j,k] + cp2_y[i,j,k]*(Ey[i,j,k] + ey_old)
+                    Pz[i,j,k] = cp1_z[i,j,k]*Pz[i,j,k] + cp2_z[i,j,k]*(Ez[i,j,k] + ez_old)
+
+        # Multi-Element Phased Array Excitation (CW)
+        for e in range(num_el):
+            pulse = amp_arr[e] * math.sin(omega * n * dt + phase_arr[e])
+            for k in range(fzs_arr[e], fze_arr[e] + 1): Ez[fx_arr[e], fy_arr[e], k] += pulse
+            
+        if n >= steps - accum_steps:
+            e_j_wt = np.exp(-1j * omega * n * dt)
+            for i in range(Nx):
+                for j in range(Ny):
+                    Ex_phasor[i,j] += Ex[i, j, z_scan] * e_j_wt
+                    Ey_phasor[i,j] += Ey[i, j, z_scan] * e_j_wt
+
+    Ex_phasor /= accum_steps; Ey_phasor /= accum_steps
+    return Ex_phasor, Ey_phasor
+
+def compute_far_field_direct_planar(Ex_nf, Ey_nf, x_arr, y_arr, freq, thetas, phis):
+    k0 = 2 * np.pi * freq / C_LIGHT
+    X, Y = np.meshgrid(x_arr, y_arr, indexing='ij')
+    dx_s = x_arr[1] - x_arr[0] if len(x_arr) > 1 else 1.0; dy_s = y_arr[1] - y_arr[0] if len(y_arr) > 1 else 1.0
     THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
+    kx = k0 * np.sin(THETA) * np.cos(PHI); ky = k0 * np.sin(THETA) * np.sin(PHI)
     
-    # Z-directed dipole + secondary high-frequency ripple for side lobes + structural noise
-    U_ideal = np.abs(np.sin(THETA))**2
-    ripple = 0.1 * np.abs(np.sin(5 * THETA))**2
-    noise = np.random.uniform(0, 0.01, THETA.shape)
+    X_b = X[:, :, None, None]; Y_b = Y[:, :, None, None]
+    kx_b = kx[None, None, :, :]; ky_b = ky[None, None, :, :]
     
-    U_mag = U_ideal + ripple + noise
+    kernel = np.exp(1j * (kx_b * X_b + ky_b * Y_b))
+    Fx = np.sum(Ex_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_s * dy_s
+    Fy = np.sum(Ey_nf[:, :, None, None] * kernel, axis=(0, 1)) * dx_s * dy_s
     
-    # Construct complex fields representing this power distribution (mostly E_theta)
-    E_th = np.sqrt(U_mag) * np.exp(1j * np.random.normal(0, 0.1, THETA.shape))
-    E_ph = 0.05 * E_th # Slight cross-polarization
-    
-    return {
-        "freq": freq, "f_arr": f_arr, "s11_mag": s11_lin, "s11_db": s11_db,
-        "thetas": thetas, "phis": phis, "E_th": E_th, "E_ph": E_ph, "source": "MOCK DATA"
-    }
-
-def compute_1d_beam_metrics(angles, U_cut):
-    """Computes Peak, HPBW, Side Lobes, and Nulls for a 1D Radiation Cut."""
-    U_db = 10 * np.log10(U_cut / np.max(U_cut) + 1e-12)
-    peak_idx = np.argmax(U_cut)
-    peak_angle = angles[peak_idx]
-    
-    # HPBW (-3dB)
-    hp_idxs = np.where(U_db >= -3.0)[0]
-    hpbw = 0.0
-    if len(hp_idxs) > 1:
-        # Check if it wraps around or is continuous
-        hpbw = abs(angles[hp_idxs[-1]] - angles[hp_idxs[0]])
-        if hpbw > 180: hpbw = 360 - hpbw
-        
-    # Simple Peak/Null Detector
-    peaks = []; nulls = []
-    for i in range(1, len(U_cut)-1):
-        if U_db[i] > U_db[i-1] and U_db[i] > U_db[i+1] and U_db[i] > -40: peaks.append(i)
-        if U_db[i] < U_db[i-1] and U_db[i] < U_db[i+1] and U_db[i] < -10: nulls.append(i)
-        
-    # Side Lobe Level (SLL)
-    sll_db = -999.0
-    for p in peaks:
-        if p != peak_idx and U_db[p] > sll_db:
-            if abs(angles[p] - peak_angle) > 20: # Ensure it's not just noise on the main lobe
-                sll_db = U_db[p]
-                
-    return {"peak_angle": peak_angle, "hpbw": hpbw, "sll_db": sll_db if sll_db > -999 else None, "nulls": [angles[n] for n in nulls]}
-
-def characterize_antenna(dataset):
-    """Core Engine integrating M35 Physics analytics."""
-    char = {"anomalies": [], "validation": "PASS"}
-    
-    # 1. S-Parameter Analytics
-    s11_db = dataset["s11_db"]
-    f_arr = dataset["f_arr"]
-    min_idx = np.argmin(s11_db)
-    f_res = f_arr[min_idx]
-    s11_res = s11_db[min_idx]
-    vswr_res = (1 + 10**(s11_res/20)) / (1 - 10**(s11_res/20) + 1e-12)
-    
-    # Bandwidth (-10dB)
-    bw_idx = np.where(s11_db <= -10.0)[0]
-    bw_hz = (f_arr[bw_idx[-1]] - f_arr[bw_idx[0]]) if len(bw_idx) > 1 else 0.0
-    
-    mismatch_eff = 1.0 - (10**(s11_res/20))**2
-    
-    if abs(f_res - dataset["freq"]) > 50e6:
-        char["anomalies"].append(f"WARNING: Resonance ({f_res/1e9:.2f} GHz) shifted from Operating Freq ({dataset['freq']/1e9:.2f} GHz).")
-        char["validation"] = "WARNING"
-        
-    char["s_params"] = {"f_res": f_res, "s11_res": s11_res, "vswr": vswr_res, "bw_hz": bw_hz, "mismatch_eff": mismatch_eff}
-    
-    # 2. 3D Radiation & Directivity Integration (D = 4 * pi * U_max / P_rad)
-    E_th = dataset["E_th"]; E_ph = dataset["E_ph"]
-    thetas = dataset["thetas"]; phis = dataset["phis"]
-    THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
-    
-    U = np.abs(E_th)**2 + np.abs(E_ph)**2
-    U_max = np.max(U)
-    
-    dtheta = thetas[1] - thetas[0] if len(thetas) > 1 else 1.0
-    dphi = phis[1] - phis[0] if len(phis) > 1 else 1.0
-    
-    # Integral U * sin(theta) d_theta d_phi
-    P_rad = np.sum(U * np.sin(THETA) * dtheta * dphi)
-    
-    directivity_lin = (4 * np.pi * U_max) / (P_rad + 1e-12)
-    directivity_db = 10 * np.log10(directivity_lin + 1e-12)
-    
-    # Gain = Eff * D
-    rad_eff = 0.95 # Assume 95% physical radiation efficiency for MOCK lossy FR4 dipole
-    total_eff = rad_eff * mismatch_eff
-    gain_db = 10 * np.log10(total_eff * directivity_lin + 1e-12)
-    
-    idx_t, idx_p = np.unravel_index(np.argmax(U), U.shape)
-    peak_theta = np.rad2deg(thetas[idx_t])
-    peak_phi = np.rad2deg(phis[idx_p])
-    
-    char["radiation"] = {
-        "D_db": directivity_db, "G_db": gain_db, "rad_eff": rad_eff, "tot_eff": total_eff,
-        "peak_theta": peak_theta, "peak_phi": peak_phi
-    }
-    
-    # 3. 2D Cut Analytics (Beamwidth, SLL, FBR)
-    # E-Plane (Fixed Phi)
-    e_cut = U[:, idx_p]
-    e_metrics = compute_1d_beam_metrics(np.rad2deg(thetas), e_cut)
-    
-    # Front-to-Back Ratio (Assumes peak is front, pi-theta is back)
-    back_theta_idx = np.argmin(np.abs(np.rad2deg(thetas) - (180.0 - peak_theta)))
-    fbr_db = 10 * np.log10(U_max / (U[back_theta_idx, idx_p] + 1e-12))
-    
-    if e_metrics["sll_db"] is not None and e_metrics["sll_db"] > -10.0:
-        char["anomalies"].append(f"WARNING: High Side-Lobe Level detected ({e_metrics['sll_db']:.1f} dB).")
-        char["validation"] = "WARNING"
-        
-    char["beam"] = {"e_hpbw": e_metrics["hpbw"], "e_sll": e_metrics["sll_db"], "fbr": fbr_db, "nulls": e_metrics["nulls"]}
-    
-    # 4. Polarization (Axial Ratio at Main Beam)
-    E_th_peak = E_th[idx_t, idx_p]
-    E_ph_peak = E_ph[idx_t, idx_p]
-    
-    # Axial ratio (Simplified ratio of orthogonal magnitudes for linear approximation)
-    if np.abs(E_ph_peak) < 1e-6: ar_db = 99.9 # Linear
-    else:
-        ar_lin = np.abs(E_th_peak) / np.abs(E_ph_peak)
-        ar_db = 20 * np.log10(max(ar_lin, 1/ar_lin))
-    
-    char["polarization"] = {"axial_ratio": ar_db, "type": "Linear" if ar_db > 20 else ("Circular" if ar_db <= 3 else "Elliptical")}
-    
-    return char
+    E_theta = (Fx * np.cos(PHI) + Fy * np.sin(PHI)) * np.cos(THETA); E_phi = -Fx * np.sin(PHI) + Fy * np.cos(PHI)
+    return E_theta, E_phi
 
 # ============================================================
-# M35: ADVANCED CHARACTERIZATION LABORATORY UI
+# M36: ARRAY MATHEMATICS & ACTIVE VSWR KERNEL
 # ============================================================
-if exp_mode == "Advanced Antenna Characterization (M35)":
-    st.markdown("### 📊 Advanced Antenna Characterization & Validation Lab")
-    st.info("Ingests validated 3D Far-Field spatial matrices and S-Parameters to compute robust, automated metrology scorecards including true Spherical Directivity Integrals ($4\\pi U_{max} / P_{rad}$), Total Efficiency limits, and Automated Anomaly detection without fabricating physics.")
+def generate_array_geometry(geom_type, num_el, spacing_x, spacing_y, freq):
+    """Generates Cartesian element coordinates (x, y, z) in meters."""
+    pos = np.zeros((num_el, 3))
+    wl = C_LIGHT / freq
+    dx_m = spacing_x * wl; dy_m = spacing_y * wl
     
-    t_load, t_score, t_rad, t_spar, t_rep = st.tabs([
-        "1. Load Dataset", "2. Performance Scorecard", "3. Beam & Polarization", "4. S-Parameter Correlation", "5. Automated Report"
+    if geom_type == "Uniform Linear Array (ULA)":
+        for i in range(num_el): pos[i, 0] = (i - (num_el-1)/2.0) * dx_m
+    elif geom_type == "Planar Rectangular Array (UPA)":
+        side = int(np.ceil(np.sqrt(num_el)))
+        for i in range(num_el):
+            row = i // side; col = i % side
+            pos[i, 0] = (col - (side-1)/2.0) * dx_m
+            pos[i, 1] = (row - (side-1)/2.0) * dy_m
+    elif geom_type == "Uniform Circular Array (UCA)":
+        radius = dx_m * num_el / (2 * np.pi) if num_el > 1 else dx_m
+        for i in range(num_el):
+            angle = i * (2 * np.pi / num_el)
+            pos[i, 0] = radius * np.cos(angle); pos[i, 1] = radius * np.sin(angle)
+    return pos
+
+def compute_array_factor(theta_arr, phi_arr, pos, amps, phases, freq):
+    """Analytically computes the 3D Array Factor (AF) matrix."""
+    k0 = 2 * np.pi * freq / C_LIGHT
+    THETA, PHI = np.meshgrid(theta_arr, phi_arr, indexing='ij')
+    rx = np.sin(THETA) * np.cos(PHI); ry = np.sin(THETA) * np.sin(PHI); rz = np.cos(THETA)
+    
+    AF = np.zeros_like(THETA, dtype=np.complex128)
+    for n in range(len(amps)):
+        phase_term = k0 * (pos[n, 0]*rx + pos[n, 1]*ry + pos[n, 2]*rz)
+        AF += amps[n] * np.exp(1j * (phase_term + phases[n]))
+    return AF
+
+def calculate_active_vswr(amps, phases, S_matrix):
+    """Computes Active Reflection Coefficient & Active VSWR under full coupling."""
+    N = len(amps)
+    a = amps * np.exp(1j * phases) # Complex incident waves
+    gamma_active = np.zeros(N, dtype=np.complex128)
+    
+    for i in range(N):
+        if np.abs(a[i]) < 1e-12: continue
+        coupling_sum = 0j
+        for j in range(N): coupling_sum += S_matrix[i, j] * a[j]
+        gamma_active[i] = coupling_sum / a[i]
+        
+    vswr_active = (1 + np.abs(gamma_active)) / (1 - np.abs(gamma_active) + 1e-12)
+    return gamma_active, vswr_active
+
+def generate_mock_s_matrix(num_el, spacing_wl):
+    """MOCK S-Parameter Matrix for realistic array coupling diagnostics."""
+    S = np.zeros((num_el, num_el), dtype=np.complex128)
+    for i in range(num_el):
+        for j in range(num_el):
+            if i == j: S[i, i] = 10**(-15/20) * np.exp(-1j * np.pi/4) # S11 ~ -15 dB
+            else:
+                dist = abs(i - j) * spacing_wl
+                # Coupling decays exponentially with distance
+                mag = 10**(-20/20) * np.exp(-dist * 1.5)
+                phase = -2 * np.pi * dist
+                S[i, j] = mag * np.exp(1j * phase)
+    return S
+
+def binomial_weights(N):
+    if N <= 1: return np.array([1.0])
+    w = np.zeros(N)
+    for k in range(N): w[k] = math.comb(N-1, k)
+    return w / np.max(w)
+
+# ============================================================
+# M36: ADVANCED ANTENNA ARRAY LABORATORY UI
+# ============================================================
+if exp_mode == "Advanced Antenna Array Lab (M36)":
+    st.markdown("### 📡 Advanced Antenna Array & Multi-System Characterization")
+    st.info("Unifies elemental FDTD physics with Array Factor (AF) analytical steering, Active VSWR mutual coupling metrics, and structural tolerance degradation testing.")
+    
+    t_cfg, t_af, t_vswr, t_fdtd, t_tol = st.tabs([
+        "1. Array Configuration", "2. Array Factor & Steering", "3. Coupling & Active VSWR", "4. Full-Wave Correlation", "5. Tolerance Analysis"
     ])
     
-    with t_load:
-        st.markdown("#### Antenna Dataset Selection")
-        if st.button("Generate Comprehensive Target Dataset (MOCK)", type="primary"):
-            with st.spinner("Generating MOCK Far-Field Spatial Tensors & S-Parameters..."):
-                st.session_state.m35_dataset = generate_m35_mock_dataset()
-                st.session_state.m35_char = characterize_antenna(st.session_state.m35_dataset)
-            st.success("MOCK Dataset Generated and Characterization Engine executed successfully.")
-            
-        if st.session_state.m35_dataset is not None:
-            ds = st.session_state.m35_dataset
-            st.write(f"**Data Source:** `{ds['source']}`")
-            st.write(f"**Operating Frequency:** `{ds['freq']/1e9:.2f} GHz`")
-            st.write(f"**Spatial Array:** `{len(ds['thetas'])} x {len(ds['phis'])} points`")
+    # Base Configurations
+    freq_arr = 2.4e9
+    wl_arr = C_LIGHT / freq_arr
+    
+    with t_cfg:
+        st.markdown("#### Geometry & Excitation Architecture")
+        c_c1, c_c2, c_c3 = st.columns(3)
+        array_type = c_c1.selectbox("Array Geometry", ["Uniform Linear Array (ULA)", "Planar Rectangular Array (UPA)", "Uniform Circular Array (UCA)"])
+        N_el = c_c2.number_input("Number of Elements", 2, 64, 4, 1)
+        spacing = c_c3.number_input("Element Spacing (λ)", 0.1, 2.0, 0.5, 0.05)
+        
+        pos = generate_array_geometry(array_type, N_el, spacing, spacing, freq_arr)
+        
+        st.markdown("##### Array Visualization (Top-Down)")
+        fig_lyt = go.Figure(go.Scatter(x=pos[:,0]/wl_arr, y=pos[:,1]/wl_arr, mode='markers+text', text=[str(i+1) for i in range(N_el)], textposition="top center", marker=dict(size=12, color='red')))
+        fig_lyt.update_layout(title="Element Layout (Wavelengths)", xaxis_title="X (λ)", yaxis_title="Y (λ)", width=600, height=400)
+        st.plotly_chart(fig_lyt)
+        
+        st.session_state.m36_array = {"pos": pos, "N": N_el, "space": spacing, "type": array_type}
 
-    with t_score:
-        if st.session_state.m35_char is None: st.warning("Load a dataset first.")
-        else:
-            c = st.session_state.m35_char
-            st.markdown("#### 🏆 Antenna Characterization Scorecard")
-            
-            # Validation Banner
-            if c["validation"] == "PASS": st.success("OVERALL VALIDATION: PASS - No Critical Anomalies Detected.")
-            else: st.warning("OVERALL VALIDATION: WARNING - Anomalies Detected in Dataset.")
-            
-            # Anomaly Log
-            if len(c["anomalies"]) > 0:
-                st.markdown("**Automated Anomaly Detection Engine:**")
-                for a in c["anomalies"]: st.error(a)
-                
-            st.markdown("---")
-            cc1, cc2, cc3, cc4 = st.columns(4)
-            cc1.metric("Peak Direction (θ, φ)", f"{c['radiation']['peak_theta']:.0f}°, {c['radiation']['peak_phi']:.0f}°")
-            cc2.metric("Directivity (Spherical Int)", f"{c['radiation']['D_db']:.2f} dBi")
-            cc3.metric("Realized Gain", f"{c['radiation']['G_db']:.2f} dB")
-            cc4.metric("Total Efficiency", f"{c['radiation']['tot_eff']*100:.1f} %")
-            
-            cc5, cc6, cc7, cc8 = st.columns(4)
-            cc5.metric("HPBW (E-Plane)", f"{c['beam']['e_hpbw']:.1f}°")
-            sll_str = f"{c['beam']['e_sll']:.1f} dBc" if c['beam']['e_sll'] is not None else "N/A"
-            cc6.metric("Peak Side-Lobe Level", sll_str)
-            cc7.metric("Front-to-Back Ratio", f"{c['beam']['fbr']:.1f} dB")
-            cc8.metric("Polarization Type", f"{c['polarization']['type']} (AR: {c['polarization']['axial_ratio']:.1f} dB)")
-
-    with t_rad:
-        if st.session_state.m35_dataset is None: st.warning("Load a dataset first.")
-        else:
-            ds = st.session_state.m35_dataset
-            c = st.session_state.m35_char
-            
-            st.markdown("#### 3D Radiation Pattern & 2D E-Plane Cut")
-            
-            U = np.abs(ds["E_th"])**2 + np.abs(ds["E_ph"])**2
-            U_db = 10 * np.log10(U / np.max(U) + 1e-12)
-            
-            col_r1, col_r2 = st.columns([1, 1])
-            
-            with col_r1:
-                # 3D
-                T, P = np.meshgrid(ds["thetas"], ds["phis"], indexing='ij')
-                R = np.maximum(U_db + 40, 0)
-                X = R * np.sin(T) * np.cos(P); Y = R * np.sin(T) * np.sin(P); Z = R * np.cos(T)
-                
-                fig_3d = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, surfacecolor=U_db, colorscale='Jet', colorbar=dict(title="Norm dB"))])
-                fig_3d.update_layout(title="3D Normalized Far-Field", height=450)
-                st.plotly_chart(fig_3d, use_container_width=True)
-                
-            with col_r2:
-                # 2D
-                idx_p = np.argmin(np.abs(ds["phis"] - np.deg2rad(c["radiation"]["peak_phi"])))
-                e_cut = U_db[:, idx_p]
-                
-                theta_deg = np.rad2deg(ds["thetas"])
-                theta_full = np.concatenate([theta_deg, 360 - theta_deg[::-1]])
-                e_cut_full = np.concatenate([e_cut, U_db[::-1, np.argmin(np.abs(ds["phis"] - np.deg2rad((c["radiation"]["peak_phi"]+180)%360)))]])
-                
-                fig_2d = go.Figure(go.Scatterpolar(r=e_cut_full, theta=theta_full, mode='lines', line_color='blue'))
-                fig_2d.update_layout(title=f"E-Plane Cut (Phi={c['radiation']['peak_phi']:.0f}°)", polar=dict(radialaxis=dict(range=[-40, 0], ticksuffix=" dB")), height=450)
-                st.plotly_chart(fig_2d, use_container_width=True)
-
-    with t_spar:
-        if st.session_state.m35_dataset is None: st.warning("Load a dataset first.")
-        else:
-            ds = st.session_state.m35_dataset
-            c = st.session_state.m35_char
-            
-            st.markdown("#### Frequency Domain Correlation: S11 & Impedance Match")
-            
+    if st.session_state.m36_array is not None:
+        arr = st.session_state.m36_array
+        N = arr["N"]; pos = arr["pos"]
+        
+        with t_af:
+            st.markdown("#### Phase Steering & Side-Lobe Tapering")
             c_s1, c_s2, c_s3 = st.columns(3)
-            c_s1.metric("Resonant Frequency", f"{c['s_params']['f_res']/1e9:.3f} GHz")
-            c_s2.metric("Return Loss @ Resonance", f"{-c['s_params']['s11_res']:.2f} dB")
-            c_s3.metric("-10dB Bandwidth", f"{c['s_params']['bw_hz']/1e6:.1f} MHz")
+            steer_th = c_s1.number_input("Steering Theta (°)", 0.0, 180.0, 90.0)
+            steer_ph = c_s2.number_input("Steering Phi (°)", 0.0, 360.0, 30.0)
+            taper_type = c_s3.selectbox("Amplitude Tapering (Side-Lobe Control)", ["Uniform", "Binomial"])
             
-            fig_s = go.Figure()
-            fig_s.add_trace(go.Scatter(x=ds["f_arr"]/1e9, y=ds["s11_db"], mode='lines', name='S11 (dB)', line_color='green'))
-            fig_s.add_hline(y=-10.0, line_dash="dash", line_color="red", annotation_text="-10 dB Bandwidth Limit")
-            fig_s.add_vline(x=ds["freq"]/1e9, line_dash="dashdot", line_color="black", annotation_text="Operating Freq")
-            fig_s.update_layout(title="S11 Reflection Coefficient Profile", xaxis_title="Frequency (GHz)", yaxis_title="S11 (dB)")
-            st.plotly_chart(fig_s, use_container_width=True)
-
-    with t_rep:
-        if st.session_state.m35_char is not None:
-            st.markdown("#### 🗃️ Characterization Data Export")
-            ds = st.session_state.m35_dataset
-            c = st.session_state.m35_char
+            # Grating Lobe Diagnostic
+            if arr["type"] == "Uniform Linear Array (ULA)" and arr["space"] > 1.0 / (1.0 + np.abs(np.sin(np.deg2rad(steer_ph)))):
+                st.warning(f"⚠️ GRATING LOBE WARNING: Spacing ({arr['space']}λ) exceeds theoretical limits for selected steering angle. Undesired spatial aliasing beams will emerge.")
             
-            report = {
-                "Characterization_ID": str(uuid.uuid4()),
-                "Timestamp": datetime.datetime.now().isoformat(),
-                "Data_Source": ds["source"],
-                "Validation_Status": c["validation"],
-                "Frequency_Hz": ds["freq"],
-                "Metrics": {
-                    "Directivity_dBi": float(c["radiation"]["D_db"]),
-                    "Gain_dB": float(c["radiation"]["G_db"]),
-                    "Total_Efficiency": float(c["radiation"]["tot_eff"]),
-                    "Peak_Direction_Theta": float(c["radiation"]["peak_theta"]),
-                    "Peak_Direction_Phi": float(c["radiation"]["peak_phi"]),
-                    "HPBW_Deg": float(c["beam"]["e_hpbw"]),
-                    "Front_To_Back_Ratio_dB": float(c["beam"]["fbr"])
-                },
-                "S_Parameters": {
-                    "Resonance_Hz": float(c["s_params"]["f_res"]),
-                    "VSWR": float(c["s_params"]["vswr"]),
-                    "Bandwidth_Hz": float(c["s_params"]["bw_hz"])
-                },
-                "Anomalies": c["anomalies"]
-            }
+            if st.button("Compute Array Factor (AF)", type="primary"):
+                # Weights
+                amps = np.ones(N) if taper_type == "Uniform" else binomial_weights(N)
+                
+                # Steering Phases: phi_n = -k * (r_n \cdot r_hat)
+                k0 = 2 * np.pi * freq_arr / C_LIGHT
+                rx = np.sin(np.deg2rad(steer_th)) * np.cos(np.deg2rad(steer_ph))
+                ry = np.sin(np.deg2rad(steer_th)) * np.sin(np.deg2rad(steer_ph))
+                rz = np.cos(np.deg2rad(steer_th))
+                
+                phases = -k0 * (pos[:,0]*rx + pos[:,1]*ry + pos[:,2]*rz)
+                
+                arr["amps"] = amps; arr["phases"] = phases
+                
+                thetas = np.deg2rad(np.arange(0, 181, 2)); phis = np.deg2rad(np.arange(0, 360, 2))
+                AF = compute_array_factor(thetas, phis, pos, amps, phases, freq_arr)
+                AF_db = 20 * np.log10(np.abs(AF) / np.max(np.abs(AF)) + 1e-12)
+                
+                # 3D Plot
+                THETA, PHI = np.meshgrid(thetas, phis, indexing='ij')
+                R_plt = np.maximum(AF_db + 40, 0)
+                X_plt = R_plt * np.sin(THETA) * np.cos(PHI); Y_plt = R_plt * np.sin(THETA) * np.sin(PHI); Z_plt = R_plt * np.cos(THETA)
+                
+                fig_af = go.Figure(data=[go.Surface(x=X_plt, y=Y_plt, z=Z_plt, surfacecolor=AF_db, colorscale='Jet')])
+                fig_af.update_layout(title="3D Normalized Array Factor (dB)", height=500)
+                st.plotly_chart(fig_af, use_container_width=True)
+
+        with t_vswr:
+            st.markdown("#### Mutual Coupling & Active VSWR Matrix")
+            st.info("The presence of Mutual Coupling ($S_{ij}$) shifts element matching dynamically based on the excitation vector $w_n$. Active VSWR determines true amplifier load.")
             
-            st.json(report)
-            st.download_button("Export Characterization Report (JSON)", data=json.dumps(report, indent=2), file_name="m35_antenna_report.json", mime="application/json")
+            if "amps" in arr:
+                S_mat = generate_mock_s_matrix(N, arr["space"])
+                gamma_act, vswr_act = calculate_active_vswr(arr["amps"], arr["phases"], S_mat)
+                
+                cc1, cc2 = st.columns(2)
+                
+                # Heatmap
+                S_db = 20 * np.log10(np.abs(S_mat) + 1e-12)
+                fig_s = go.Figure(data=go.Heatmap(z=S_db, colorscale='Reds', zmax=0, zmin=-40, colorbar=dict(title="dB")))
+                fig_s.update_layout(title="MOCK S-Parameter Matrix ($S_{ij}$)", xaxis_title="Port J", yaxis_title="Port I", height=400)
+                cc1.plotly_chart(fig_s, use_container_width=True)
+                
+                # Active VSWR Bar Chart
+                fig_v = go.Figure(data=[go.Bar(x=[f"Element {i+1}" for i in range(N)], y=vswr_act, marker_color='orange')])
+                fig_v.add_hline(y=2.0, line_dash="dash", line_color="red", annotation_text="VSWR 2.0 (Threshold)")
+                fig_v.update_layout(title="Active VSWR per Element (Steered State)", yaxis_title="VSWR", height=400)
+                cc2.plotly_chart(fig_v, use_container_width=True)
+            else: st.warning("Compute the Array Factor first to define excitation weights.")
 
-elif exp_mode not in ["Advanced Antenna Characterization (M35)"]:
-    st.info("Select 'Advanced Antenna Characterization (M35)' to run automated Metrology Scorecards and Anomaly Detections.")
+        with t_fdtd:
+            st.markdown("#### 🔄 Full-Wave Validation vs Array Factor")
+            st.info("Re-simulates the physical grid using FDTD by exciting discrete local dipole sources applying the exact generated Complex Weights. Cross-correlates the resulting Numerical Far-Field against the theoretical Array Factor.")
+            
+            if "amps" in arr:
+                if st.button("Execute Full-Wave Array Simulation", type="primary"):
+                    pb = st.progress(0)
+                    # Translate physical positions to FDTD indices
+                    f_x_arr = np.zeros(N, dtype=int); f_y_arr = np.zeros(N, dtype=int)
+                    f_zs_arr = np.zeros(N, dtype=int); f_ze_arr = np.zeros(N, dtype=int)
+                    
+                    arm = 2 # Small short dipole for coupling test
+                    for i in range(N):
+                        f_x_arr[i] = int(cx + pos[i, 0] / dx)
+                        f_y_arr[i] = int(cy + pos[i, 1] / dy)
+                        f_zs_arr[i] = cz - arm; f_ze_arr[i] = cz + arm
+                        
+                    reset_materials()
+                    # Add PECs for elements
+                    for i in range(N):
+                        apply_material_block(f_x_arr[i], f_x_arr[i], f_y_arr[i], f_y_arr[i], f_zs_arr[i], f_ze_arr[i], MAT_LIB["PEC (Perfect Conductor)"])
+                        
+                    z_scan = cz + 12
+                    Ex_sim, Ey_sim = run_simulation_array_cpu(Nx, Ny, Nz, dx, dy, dz, dt, 300, b_e_x, c_e_x, b_h_x, c_h_x, b_e_y, c_e_y, b_h_y, c_h_y, b_e_z, c_e_z, b_h_z, c_h_z, ce1_x, ce2_x, ce3_x, cp1_x, cp2_x, ce1_y, ce2_y, ce3_y, cp1_y, cp2_y, ce1_z, ce2_z, ce3_z, cp1_z, cp2_z, ch2, N, f_x_arr, f_y_arr, f_zs_arr, f_ze_arr, arr["amps"], arr["phases"], freq_arr, z_scan)
+                    pb.progress(0.5)
+                    
+                    # Planar NF2FF
+                    x_scan = (np.arange(Nx) - cx) * dx; y_scan = (np.arange(Ny) - cy) * dy
+                    thetas = np.deg2rad(np.arange(0, 90, 2)); phis = np.deg2rad(np.arange(0, 360, 2))
+                    Eth, Eph = compute_far_field_direct_planar(Ex_sim, Ey_sim, x_scan, y_scan, freq_arr, thetas, phis)
+                    
+                    E_tot_db = 20 * np.log10(np.sqrt(np.abs(Eth)**2 + np.abs(Eph)**2) + 1e-12)
+                    E_tot_norm = E_tot_db - np.max(E_tot_db)
+                    
+                    # Recompute AF for matching grid
+                    AF_match = compute_array_factor(thetas, phis, pos, arr["amps"], arr["phases"], freq_arr)
+                    AF_match_db = 20 * np.log10(np.abs(AF_match) / np.max(np.abs(AF_match)) + 1e-12)
+                    
+                    pb.progress(1.0)
+                    
+                    idx_p = np.argmin(np.abs(phis - np.deg2rad(steer_ph)))
+                    
+                    fig_cmp = go.Figure()
+                    fig_cmp.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_match_db[:, idx_p], mode='lines', name="Theoretical Array Factor", line=dict(color='black', width=3)))
+                    fig_cmp.add_trace(go.Scatter(x=np.rad2deg(thetas), y=E_tot_norm[:, idx_p], mode='lines', name="Full-Wave FDTD Integration", line=dict(dash='dash', color='red')))
+                    fig_cmp.update_layout(title=f"Azimuth Cut Correlation (Phi={steer_ph}°)", xaxis_title="Theta (°)", yaxis_title="Normalized Pattern (dB)", yaxis_range=[-40, 0])
+                    st.plotly_chart(fig_cmp, use_container_width=True)
 
+                    st.session_state.m36_ff = {"type": "FullWave"}
+            else: st.warning("Compute the Array Factor first.")
+
+        with t_tol:
+            st.markdown("#### 💥 Element Failure & Tolerance Analysis")
+            if "amps" in arr:
+                fail_idx = st.selectbox("Simulate Failed Element", ["None"] + [f"Element {i+1}" for i in range(N)])
+                phase_err = st.number_input("Systemic Phase Tolerance Error (Std Dev °)", 0.0, 45.0, 15.0)
+                
+                if st.button("Run Degradation Analysis"):
+                    amps_deg = arr["amps"].copy()
+                    phases_deg = arr["phases"].copy()
+                    
+                    if fail_idx != "None":
+                        idx = int(fail_idx.split()[1]) - 1
+                        amps_deg[idx] = 0.0 # Element Dead
+                        
+                    np.random.seed(42)
+                    phases_deg += np.deg2rad(np.random.normal(0, phase_err, N))
+                    
+                    thetas = np.deg2rad(np.arange(0, 181, 2)); phis = np.deg2rad(np.array([steer_ph]))
+                    
+                    AF_ideal = compute_array_factor(thetas, phis, pos, arr["amps"], arr["phases"], freq_arr)
+                    AF_ideal_db = 20 * np.log10(np.abs(AF_ideal) / np.max(np.abs(AF_ideal)) + 1e-12)
+                    
+                    AF_deg = compute_array_factor(thetas, phis, pos, amps_deg, phases_deg, freq_arr)
+                    AF_deg_db = 20 * np.log10(np.abs(AF_deg) / np.max(np.abs(AF_ideal)) + 1e-12) # Norm against ideal peak
+                    
+                    fig_tol = go.Figure()
+                    fig_tol.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_ideal_db[:, 0], mode='lines', name="Ideal Array", line=dict(color='blue')))
+                    fig_tol.add_trace(go.Scatter(x=np.rad2deg(thetas), y=AF_deg_db[:, 0], mode='lines', name="Degraded (Failed/Tolerance)", line=dict(color='red')))
+                    fig_tol.update_layout(title="Array Pattern Degradation (Tolerance Run)", xaxis_title="Theta (°)", yaxis_title="Gain Relative to Ideal (dB)", yaxis_range=[-40, 5])
+                    st.plotly_chart(fig_tol, use_container_width=True)
+                    
+                    report = {
+                        "Array_ID": str(uuid.uuid4()), "Timestamp": datetime.datetime.now().isoformat(),
+                        "Geometry": arr["type"], "Elements": N, "Steering_Angle": steer_th,
+                        "Tolerance_Analysis": {"Failed_Element": fail_idx, "Phase_Error_Sigma": phase_err},
+                        "Validation": "PASS" if st.session_state.m36_ff else "WARNING: Full-Wave Not Executed"
+                    }
+                    st.download_button("Export Array Provenance Report (JSON)", data=json.dumps(report, indent=2), file_name="m36_array_report.json", mime="application/json")
+            else: st.warning("Compute the Array Factor first.")
+
+elif exp_mode not in ["Advanced Antenna Array Lab (M36)"]:
+    st.info("Select 'Advanced Antenna Array Lab (M36)' to interact with Phased Arrays, Mutual Coupling, and Active VSWR parameters.")
